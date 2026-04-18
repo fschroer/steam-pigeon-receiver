@@ -1,0 +1,144 @@
+#pragma once
+#include <cstddef>
+#include <cstdint>
+#include "Types.hpp"
+#include "RocketSettings.hpp"
+#include "Archive.hpp"
+
+namespace Communication {
+
+// Max total bytes for one packet (header + fields + payload)
+constexpr size_t kMaxPayloadBytes = 256;
+constexpr uint16_t max_msg_size = 256;
+constexpr uint8_t system_id = 0x44;
+constexpr uint16_t kCrc16Poly = 0xA001;   // CRC‑16/IBM reflected polynomial
+constexpr uint16_t kCrc16Key  = 0xFFFF;   // standard initial value
+
+// Message type for the packet header
+enum class MsgType : uint8_t {
+	PreLaunchData         = 1, // Unsolicited message sent from the locator while in an unarmed state.
+	TelemetryData         = 2, // Unsolicited message sent from the locator while in an armed state.
+	FlightMetadataRequest = 3, // Request from the app, via the receiver, for high-level information necessary to identify each flight profile record archived by the locator.
+	FlightMetadata        = 4, // Flight profile metadata response from the locator to the app via the receiver.
+	FlightDataRequest     = 5, // Request from the app, via the receiver, for the data in one flight profile.
+	FlightData            = 6, // Flight profile data response from the locator to the app via the receiver consisting of multiple packets, which the app acknowledges via the receiver.
+	FlightDataParity      = 7, // Parity packet to allow the app to reconstruct profile data if one packet is lost.
+	FlightDataAck         = 8, // Profile data acknowledgement packet sent from the app via the receiver.
+	DeploymentTestRequest = 9, // Request from the app, via the receiver, for the locator to execute a deployment test.
+	DeploymentTest        = 10 // Deployment test countdown sent from the locator to the app via the receiver.
+};
+
+#pragma pack(push, 1)
+
+// Common packet header (on-wire)
+struct PacketHeader {
+    uint8_t  system_id; // 1 byte
+    MsgType  msg_type;  // 1 byte
+    uint16_t msg_count; // 2 bytes
+    uint16_t crc;       // 2 bytes (CRC-16 with secret seed)
+};
+
+// Compute payload size AFTER PacketHeader is complete
+constexpr size_t kPayloadSize = kMaxPayloadBytes
+    - sizeof(PacketHeader)   // header
+    - 2u                     // transfer_id
+    - 2u                     // packet_index
+    - 2u                     // packet_count
+    - 4u;                    // total_samples
+
+struct PreLaunchData {
+	PacketHeader packet_header;
+	double latitude;
+	double longitude;
+	uint8_t satellites;
+	float hacc;
+	SensorHealth imu_status;
+	SensorHealth baro_status;
+	SensorHealth gps_status;
+	uint8_t deploy_status;
+	float agl;
+	Vec3f accel;
+	Vec3f gyro;
+	DeployMode deploy_ch1_mode;
+	DeployMode deploy_ch2_mode;
+	DeployMode deploy_ch3_mode;
+	DeployMode deploy_ch4_mode;
+	uint8_t drogue_primary_deploy_delay;
+	uint8_t drogue_backup_deploy_delay;
+	uint16_t main_primary_deploy_altitude;
+	uint16_t main_backup_deploy_altitude;
+	char device_name[device_name_length];
+	uint16_t battery_voltage_mvolt;
+};
+
+struct PreLaunchMessageExtended {
+    PreLaunchData base;     // original message
+    uint8_t  receiver_lora_channel;
+    uint16_t receiver_battery_level;
+};
+
+struct TelemetryData {
+	PacketHeader packet_header;
+	double latitude;
+	double longitude;
+	uint8_t satellites;
+	float hacc;
+	SensorHealth imu_status;
+	SensorHealth baro_status;
+	SensorHealth gps_status;
+	uint8_t deployment_ch1_stats;
+	uint8_t deployment_ch2_stats;
+	uint8_t deployment_ch3_stats;
+	uint8_t deployment_ch4_stats;
+	uint8_t physical_deployment_stats;
+	float agl;
+	Vec3f accel;
+	Vec3f gyro;
+	float velocity;
+	FlightStates flight_state;
+};
+
+struct FlightMetadataRecord {
+	uint32_t timestamp;
+	float apogee;
+	uint16_t flight_time;
+};
+
+struct FlightMetadata {
+	PacketHeader packet_header;
+	FlightMetadataRecord record[record_count];
+};
+
+// On-wire packet for flight profile transfer
+struct FlightDataPacket {
+	PacketHeader packet_header;
+	uint16_t transfer_id;   // identifies this flight profile transfer
+	uint16_t packet_index;  // 0..packet_count-1 (data) or parity index
+	uint16_t packet_count;  // total data packets (excluding parity)
+	uint32_t total_samples; // total samples in transfer
+	uint8_t payload[kPayloadSize]; // Compressed payload bytes
+};
+
+struct FlightDataAck {
+	PacketHeader header;
+	uint16_t transfer_id;
+	uint16_t packet_count;
+	static constexpr uint16_t kMaxPayloadBytes = 256;
+	uint8_t bitmap[kMaxPayloadBytes / 8];
+};
+
+struct DeploymentTestCountdownMessage {
+	PacketHeader packet_header;
+	uint8_t count;
+};
+
+struct ParsedMessage {
+    MsgType type;
+    PreLaunchData  prelaunch;
+    TelemetryData  telemetry;
+    DeploymentTestCountdownMessage deployment_test;
+};
+
+#pragma pack(pop)
+
+} // namespace Communication
