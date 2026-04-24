@@ -87,6 +87,9 @@ static void (*TxCpltCallback)(void *);
 static void (*RxCpltCallback)(uint8_t *rxChar, uint16_t size, uint8_t error);
 
 /* USER CODE BEGIN PV */
+uint8_t bt_byte_; // Buffer for Bluetooth bytes
+extern void ReceiverFactory_OnUART1Char(uint8_t byte); // C++ wrapper function
+extern void ReceiverFactory_OnUART2Char(uint8_t byte); // C++ wrapper function
 
 /* USER CODE END PV */
 
@@ -236,16 +239,24 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
   /* USER CODE BEGIN HAL_UART_RxCpltCallback_1 */
 
   /* USER CODE END HAL_UART_RxCpltCallback_1 */
-  if (huart->Instance == USART2)
-  {
-    if ((NULL != RxCpltCallback) && (HAL_UART_ERROR_NONE == huart->ErrorCode))
-    {
-      RxCpltCallback(&charRx, 1, 0);
-    }
-    HAL_UART_Receive_IT(huart, &charRx, 1);
-  }
+	if (huart->Instance == USART2) {
+		if (huart->ErrorCode == HAL_UART_ERROR_NONE) {
+			ReceiverFactory_OnUART2Char(charRx);
+			if (NULL != RxCpltCallback) {
+			  RxCpltCallback(&charRx, 1, 0);
+			}
+		}
+		HAL_UART_Receive_IT(huart, &charRx, 1);
+	}
   /* USER CODE BEGIN HAL_UART_RxCpltCallback_2 */
-
+  /* Handle USART1 (New Bluetooth Logic) */
+	else if (huart->Instance == USART1) {
+		if (huart->ErrorCode == HAL_UART_ERROR_NONE) {
+		  ReceiverFactory_OnUART1Char(bt_byte_);
+		}
+	  // Re-arm for the next byte
+		HAL_UART_Receive_IT(huart, &bt_byte_, 1);
+	}
   /* USER CODE END HAL_UART_RxCpltCallback_2 */
 }
 

@@ -40,7 +40,9 @@ extern "C" {
 
 /* Exported types ------------------------------------------------------------*/
 /* USER CODE BEGIN ET */
-
+// The 1-byte buffer the HAL will write to
+extern uint8_t bt_byte_;
+extern uint8_t charRx;
 /* USER CODE END ET */
 
 /* Exported constants --------------------------------------------------------*/

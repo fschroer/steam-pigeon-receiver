@@ -29,166 +29,190 @@ public:
     virtual void SetChannel(uint32_t freq) = 0;
 };
 
+static uint32_t last_rx_end_ms_ = 0;
+static uint32_t current_tick_ = 0;
+static bool rx_led_status_serviced_ = true;
+
 class Communication{
 public:
-  Communication(Archive& archive, PowerManagement& power, UART_HandleTypeDef& huart1);
-  void Init(IRadio& radio);
-  void SetChannel(uint8_t channel);
-  void OnRadioTxDone();   // called from ISR/callback
-  void OnRadioRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraSnr_FskCfo);   // ACK reception handler
-  void ForwardToBluetooth(const uint8_t* buf, std::size_t len);
-  void UpdateStatusLeds();
+	Communication(Archive& archive, PowerManagement& power, UART_HandleTypeDef& huart1, UART_HandleTypeDef& huart2);
+	void Init(IRadio& radio);
+	void SetChannel(uint8_t channel);
+	void OnRadioTxDone();   // called from ISR/callback
+	void OnRadioRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraSnr_FskCfo);   // ACK reception handler
+	void ForwardToBluetooth(const uint8_t* buf, std::size_t len);
+	void UpdateStatusLeds();
+	void OnUART1Char(uint8_t uart_char);
 
 private:
-  Archive& archive_;
-  PowerManagement& power_;
-  UART_HandleTypeDef& huart1_;
-  IRadio* radio_ = nullptr;
+	Archive& archive_;
+	PowerManagement& power_;
+	UART_HandleTypeDef& huart1_;
+	UART_HandleTypeDef& huart2_;
+	IRadio* radio_ = nullptr;
 
-  bool radio_busy_ = false;
-  uint32_t last_tx_end_ms_ = 0;
-  bool tx_led_status_serviced_ = true;
-  uint32_t last_rx_end_ms_ = 0;
-  bool rx_led_status_serviced_ = true;
+	bool radio_busy_ = false;
+	uint32_t last_tx_end_ms_ = 0;
+	bool tx_led_status_serviced_ = true;
 
-  const char* lora_startup_message_ = "Rocket Receiver v1.0.1\r\n\0";
-  const char* usb_connected_ = "Disconnect USB cable before arming locator\r\n\0";
-  const char* bad_gps_data_ = "Bad GPS Data\r\n\0";
+	ParseState parse_state_ = ParseState::IDLE;
+	uint32_t last_byte_time_ = 0;
+	AppMessage current_msg_;
+	uint8_t cursor_ = 0;
+	uint8_t message_length_;
 
-  ParseResult ParseLoraFrame(const uint8_t* data,
-                             std::size_t   len,
-                             uint8_t       expected_system_id,
-                             ParsedMessage& out);
+	const char* lora_startup_message_ = "Rocket Receiver v1.0.1\r\n\0";
+	const char* usb_connected_ = "Disconnect USB cable before arming locator\r\n\0";
+	const char* bad_gps_data_ = "Bad GPS Data\r\n\0";
+	static constexpr char query_version_[] = "AT+VERS\r\n";
+	static constexpr char command_mode_[] = "AT+ENAT\r\n";
+	static constexpr char data_mode_[] = "AT+EXAT\r\n";
+	static constexpr char enable_spp_broadcast_[] = "AT+SPON\r\n";
+	static constexpr char change_spp_name_[] = "AT+SPNASPReceiver2\r\n";
+	static constexpr char reset_[] = "AT+REST\r\n";
+	static constexpr char at_test_[] = "AT\r\n";
 
-  inline uint16_t Crc16Update(uint16_t crc, uint8_t data)
-  {
-      crc ^= data;
-      for (int i = 0; i < 8; i++) {
-          if (crc & 1)
-              crc = (crc >> 1) ^ kCrc16Poly;
-          else
-              crc >>= 1;
-      }
-      return crc;
-  }
+	ParseResult ParseLoraFrame(const uint8_t* data,
+							 std::size_t   len,
+							 uint8_t       expected_system_id,
+							 ParsedMessage& out);
 
-  inline uint16_t Crc16Keyed(const uint8_t* data, size_t len)
-  {
-      uint16_t crc = kCrc16Key;   // your secret seed
-      for (size_t i = 0; i < len; ++i)
-          crc = Crc16Update(crc, data[i]);
-      return crc;
-  }
+	inline uint16_t Crc16Update(uint16_t crc, uint8_t data)
+	{
+	  crc ^= data;
+	  for (int i = 0; i < 8; i++) {
+		  if (crc & 1)
+			  crc = (crc >> 1) ^ kCrc16Poly;
+		  else
+			  crc >>= 1;
+	  }
+	  return crc;
+	}
 
-  template<typename TMsg>
-  inline uint16_t ComputeMessageCrc(const TMsg& msg)
-  {
-      static_assert(std::is_trivially_copyable<TMsg>::value, "TMsg must be POD");
+	inline uint16_t Crc16Keyed(const uint8_t* data, size_t len)
+	{
+	  uint16_t crc = kCrc16Key;   // your secret seed
+	  for (size_t i = 0; i < len; ++i)
+		  crc = Crc16Update(crc, data[i]);
+	  return crc;
+	}
 
-      const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&msg);
+	template<typename TMsg>
+	inline uint16_t ComputeMessageCrc(const TMsg& msg)
+	{
+	  static_assert(std::is_trivially_copyable<TMsg>::value, "TMsg must be POD");
 
-      // 1) First 4 bytes of PacketHeader
-      uint16_t crc = kCrc16Key;
-      crc = Crc16Update(crc, bytes[0]);
-      crc = Crc16Update(crc, bytes[1]);
-      crc = Crc16Update(crc, bytes[2]);
-      crc = Crc16Update(crc, bytes[3]);
+	  const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&msg);
 
-      // 2) Skip CRC field (bytes 4–5)
-      // 3) Hash everything after header
-      const size_t payload_offset = sizeof(PacketHeader);
+	  // 1) First 4 bytes of PacketHeader
+	  uint16_t crc = kCrc16Key;
+	  crc = Crc16Update(crc, bytes[0]);
+	  crc = Crc16Update(crc, bytes[1]);
+	  crc = Crc16Update(crc, bytes[2]);
+	  crc = Crc16Update(crc, bytes[3]);
 
-      for (size_t i = payload_offset; i < sizeof(TMsg); ++i)
-          crc = Crc16Update(crc, bytes[i]);
+	  // 2) Skip CRC field (bytes 4–5)
+	  // 3) Hash everything after header
+	  const size_t payload_offset = sizeof(PacketHeader);
 
-      return crc;
-  }
+	  for (size_t i = payload_offset; i < sizeof(TMsg); ++i)
+		  crc = Crc16Update(crc, bytes[i]);
 
-  inline uint16_t ComputeMessageCrcPartial(const uint8_t* bytes, size_t msg_size)
-  {
-      using FPHeader = PacketHeader;
+	  return crc;
+	}
 
-      // Where the CRC field lives inside the header
-      constexpr size_t header_crc_offset = offsetof(FPHeader, crc);
-      constexpr size_t header_crc_size   = sizeof(FPHeader) - sizeof(uint16_t);
+	inline uint16_t ComputeMessageCrcPartial(const uint8_t* bytes, size_t msg_size)
+	{
+	  using FPHeader = PacketHeader;
 
-      // Start with the keyed seed
-      uint16_t crc = kCrc16Key;
+	  // Where the CRC field lives inside the header
+	  constexpr size_t header_crc_offset = offsetof(FPHeader, crc);
+	  constexpr size_t header_crc_size   = sizeof(FPHeader) - sizeof(uint16_t);
 
-      // 1) Header bytes BEFORE the CRC field
-      crc = Crc16Keyed(bytes, header_crc_offset);
+	  // Start with the keyed seed
+	  uint16_t crc = kCrc16Key;
 
-      // 2) Header bytes AFTER the CRC field
-      crc = Crc16Keyed(bytes + header_crc_offset + sizeof(uint16_t),
-                       header_crc_size - header_crc_offset);
+	  // 1) Header bytes BEFORE the CRC field
+	  crc = Crc16Keyed(bytes, header_crc_offset);
 
-      // 3) Everything after the header
-      if (msg_size > sizeof(FPHeader)) {
-          const size_t tail_len = msg_size - sizeof(FPHeader);
-          crc = Crc16Keyed(bytes + sizeof(FPHeader), tail_len);
-      }
+	  // 2) Header bytes AFTER the CRC field
+	  crc = Crc16Keyed(bytes + header_crc_offset + sizeof(uint16_t),
+					   header_crc_size - header_crc_offset);
 
-      return crc;
-  }
+	  // 3) Everything after the header
+	  if (msg_size > sizeof(FPHeader)) {
+		  const size_t tail_len = msg_size - sizeof(FPHeader);
+		  crc = Crc16Keyed(bytes + sizeof(FPHeader), tail_len);
+	  }
 
-  inline bool ValidateCRC(const uint8_t* data, std::size_t len)
-  {
-      if (len < sizeof(PacketHeader)) {
-          return false;
-      }
+	  return crc;
+	}
 
-      const PacketHeader* hdr =
-          reinterpret_cast<const PacketHeader*>(data);
+	inline bool ValidateCRC(const uint8_t* data, std::size_t len)
+	{
+	  if (len < sizeof(PacketHeader)) {
+		  return false;
+	  }
 
-      constexpr size_t header_size      = sizeof(PacketHeader);
-      constexpr size_t crc_offset       = offsetof(PacketHeader, crc);
-      constexpr size_t bytes_before_crc = crc_offset;            // 0..3
+	  const PacketHeader* hdr =
+		  reinterpret_cast<const PacketHeader*>(data);
 
-      uint16_t crc = kCrc16Key;
+	  constexpr size_t header_size      = sizeof(PacketHeader);
+	  constexpr size_t crc_offset       = offsetof(PacketHeader, crc);
+	  constexpr size_t bytes_before_crc = crc_offset;            // 0..3
 
-      // 1) First 4 bytes of PacketHeader (system_id, msg_type, msg_count LSB/MSB)
-      for (size_t i = 0; i < bytes_before_crc; ++i) {
-          crc = Crc16Update(crc, data[i]);
-      }
+	  uint16_t crc = kCrc16Key;
 
-      // 2) Skip CRC field (bytes 4–5)
+	  // 1) First 4 bytes of PacketHeader (system_id, msg_type, msg_count LSB/MSB)
+	  for (size_t i = 0; i < bytes_before_crc; ++i) {
+		  crc = Crc16Update(crc, data[i]);
+	  }
 
-      // 3) Header bytes AFTER CRC field
-      for (size_t i = crc_offset + 2; i < header_size; ++i) {
-          crc = Crc16Update(crc, data[i]);
-      }
+	  // 2) Skip CRC field (bytes 4–5)
 
-      // 4) Everything after the header
-      for (size_t i = header_size; i < len; ++i) {
-          crc = Crc16Update(crc, data[i]);
-      }
+	  // 3) Header bytes AFTER CRC field
+	  for (size_t i = crc_offset + 2; i < header_size; ++i) {
+		  crc = Crc16Update(crc, data[i]);
+	  }
 
-      return crc == hdr->crc;
-  }
+	  // 4) Everything after the header
+	  for (size_t i = header_size; i < len; ++i) {
+		  crc = Crc16Update(crc, data[i]);
+	  }
 
-  template<typename TMsg>
-  inline uint16_t ComputeSendMessageCrc(const TMsg& msg)
-  {
-      static_assert(std::is_trivially_copyable<TMsg>::value,
-                    "TMsg must be POD");
+	  return crc == hdr->crc;
+	}
 
-      const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&msg);
+	template<typename TMsg>
+	inline uint16_t ComputeSendMessageCrc(const TMsg& msg)
+	{
+	  static_assert(std::is_trivially_copyable<TMsg>::value,
+					"TMsg must be POD");
 
-      // 1) First 4 bytes of PacketHeader
-      uint16_t crc = kCrc16Key;
-      crc = Crc16Update(crc, bytes[0]);
-      crc = Crc16Update(crc, bytes[1]);
-      crc = Crc16Update(crc, bytes[2]);
-      crc = Crc16Update(crc, bytes[3]);
+	  const uint8_t* bytes = reinterpret_cast<const uint8_t*>(&msg);
 
-      // 2) Skip CRC field (bytes 4–5)
-      // 3) Hash everything after header
-      const size_t payload_offset = sizeof(PacketHeader);
+	  // 1) First 4 bytes of PacketHeader
+	  uint16_t crc = kCrc16Key;
+	  crc = Crc16Update(crc, bytes[0]);
+	  crc = Crc16Update(crc, bytes[1]);
+	  crc = Crc16Update(crc, bytes[2]);
+	  crc = Crc16Update(crc, bytes[3]);
 
-      for (size_t i = payload_offset; i < sizeof(TMsg); ++i)
-          crc = Crc16Update(crc, bytes[i]);
+	  // 2) Skip CRC field (bytes 4–5)
+	  // 3) Hash everything after header
+	  const size_t payload_offset = sizeof(PacketHeader);
 
-      return crc;
-  }
+	  for (size_t i = payload_offset; i < sizeof(TMsg); ++i)
+		  crc = Crc16Update(crc, bytes[i]);
+
+	  return crc;
+	}
+
+    void Reset() {
+        parse_state_ = ParseState::IDLE;
+        cursor_ = 0;
+        message_length_ = 0;
+    }
+
 };
 } // namespace Communication

@@ -12,7 +12,7 @@ constexpr std::size_t device_name_length = 12;
 struct RocketPersistentSettings
 {
     uint8_t lora_channel = 0;
-    char device_name[device_name_length + 1] = {0};
+    char device_name[device_name_length] = {0};
 };
 
 struct RocketRuntimeMetadata

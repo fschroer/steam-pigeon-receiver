@@ -236,38 +236,38 @@ void DMA1_Channel5_IRQHandler(void)
 void USART1_IRQHandler(void)
 {
   /* USER CODE BEGIN USART1_IRQn 0 */
-	  /* Customize process using LL interface to improve the performance (exhaustive feature management not handled) */
-
-	  /* Check RXNE flag value in ISR register */
-	  if(LL_USART_IsActiveFlag_RXNE(USART1) && LL_USART_IsEnabledIT_RXNE(USART1))
-	  {
-	    /* RXNE flag will be cleared by reading of RDR register (done in call) */
-	    /* Call function in charge of handling Character reception */
-	    UART1_CharReception_Callback();
-	  }
-
-	  if(LL_USART_IsEnabledIT_TXE(USART1) && LL_USART_IsActiveFlag_TXE(USART1))
-	  {
-	    /* TXE flag will be automatically cleared when writing new data in TDR register */
-
-	    /* Call function in charge of handling empty DR => will lead to transmission of next character */
-	    UART_TXEmpty_Callback();
-	  }
-
-	  if(LL_USART_IsEnabledIT_TC(USART1) && LL_USART_IsActiveFlag_TC(USART1))
-	  {
-	    /* Clear TC flag */
-	    LL_USART_ClearFlag_TC(USART1);
-	    /* Call function in charge of handling end of transmission of sent character
-	       and prepare next character transmission */
-	    UART_CharTransmitComplete_Callback();
-	  }
-
-	  if(LL_USART_IsEnabledIT_ERROR(USART1) && LL_USART_IsActiveFlag_NE(USART1))
-	  {
-	    /* Call Error function */
-	    UART_Error_Callback();
-	  }
+//	  /* Customize process using LL interface to improve the performance (exhaustive feature management not handled) */
+//
+//	  /* Check RXNE flag value in ISR register */
+//	  if(LL_USART_IsActiveFlag_RXNE(USART1) && LL_USART_IsEnabledIT_RXNE(USART1))
+//	  {
+//	    /* RXNE flag will be cleared by reading of RDR register (done in call) */
+//	    /* Call function in charge of handling Character reception */
+//	    UART1_CharReception_Callback();
+//	  }
+//
+//	  if(LL_USART_IsEnabledIT_TXE(USART1) && LL_USART_IsActiveFlag_TXE(USART1))
+//	  {
+//	    /* TXE flag will be automatically cleared when writing new data in TDR register */
+//
+//	    /* Call function in charge of handling empty DR => will lead to transmission of next character */
+//	    UART_TXEmpty_Callback();
+//	  }
+//
+//	  if(LL_USART_IsEnabledIT_TC(USART1) && LL_USART_IsActiveFlag_TC(USART1))
+//	  {
+//	    /* Clear TC flag */
+//	    LL_USART_ClearFlag_TC(USART1);
+//	    /* Call function in charge of handling end of transmission of sent character
+//	       and prepare next character transmission */
+//	    UART_CharTransmitComplete_Callback();
+//	  }
+//
+//	  if(LL_USART_IsEnabledIT_ERROR(USART1) && LL_USART_IsActiveFlag_NE(USART1))
+//	  {
+//	    /* Call Error function */
+//	    UART_Error_Callback();
+//	  }
 
   /* USER CODE END USART1_IRQn 0 */
   HAL_UART_IRQHandler(&huart1);
@@ -282,38 +282,38 @@ void USART1_IRQHandler(void)
 void USART2_IRQHandler(void)
 {
   /* USER CODE BEGIN USART2_IRQn 0 */
-  /* Customize process using LL interface to improve the performance (exhaustive feature management not handled) */
-
-  /* Check RXNE flag value in ISR register */
-  if(LL_USART_IsActiveFlag_RXNE(USART2) && LL_USART_IsEnabledIT_RXNE(USART2))
-  {
-    /* RXNE flag will be cleared by reading of RDR register (done in call) */
-    /* Call function in charge of handling Character reception */
-    UART2_CharReception_Callback();
-  }
-
-  if(LL_USART_IsEnabledIT_TXE(USART2) && LL_USART_IsActiveFlag_TXE(USART2))
-  {
-    /* TXE flag will be automatically cleared when writing new data in TDR register */
-
-    /* Call function in charge of handling empty DR => will lead to transmission of next character */
-    UART_TXEmpty_Callback();
-  }
-
-  if(LL_USART_IsEnabledIT_TC(USART2) && LL_USART_IsActiveFlag_TC(USART2))
-  {
-    /* Clear TC flag */
-    LL_USART_ClearFlag_TC(USART2);
-    /* Call function in charge of handling end of transmission of sent character
-       and prepare next character transmission */
-    UART_CharTransmitComplete_Callback();
-  }
-
-  if(LL_USART_IsEnabledIT_ERROR(USART2) && LL_USART_IsActiveFlag_NE(USART2))
-  {
-    /* Call Error function */
-    UART_Error_Callback();
-  }
+//  /* Customize process using LL interface to improve the performance (exhaustive feature management not handled) */
+//
+//  /* Check RXNE flag value in ISR register */
+//  if(LL_USART_IsActiveFlag_RXNE(USART2) && LL_USART_IsEnabledIT_RXNE(USART2))
+//  {
+//    /* RXNE flag will be cleared by reading of RDR register (done in call) */
+//    /* Call function in charge of handling Character reception */
+//    UART2_CharReception_Callback();
+//  }
+//
+//  if(LL_USART_IsEnabledIT_TXE(USART2) && LL_USART_IsActiveFlag_TXE(USART2))
+//  {
+//    /* TXE flag will be automatically cleared when writing new data in TDR register */
+//
+//    /* Call function in charge of handling empty DR => will lead to transmission of next character */
+//    UART_TXEmpty_Callback();
+//  }
+//
+//  if(LL_USART_IsEnabledIT_TC(USART2) && LL_USART_IsActiveFlag_TC(USART2))
+//  {
+//    /* Clear TC flag */
+//    LL_USART_ClearFlag_TC(USART2);
+//    /* Call function in charge of handling end of transmission of sent character
+//       and prepare next character transmission */
+//    UART_CharTransmitComplete_Callback();
+//  }
+//
+//  if(LL_USART_IsEnabledIT_ERROR(USART2) && LL_USART_IsActiveFlag_NE(USART2))
+//  {
+//    /* Call Error function */
+//    UART_Error_Callback();
+//  }
 
   /* USER CODE END USART2_IRQn 0 */
   HAL_UART_IRQHandler(&huart2);

@@ -13,20 +13,27 @@ constexpr uint16_t max_msg_size = 256;
 constexpr uint8_t system_id = 0x44;
 constexpr uint16_t kCrc16Poly = 0xA001;   // CRC‑16/IBM reflected polynomial
 constexpr uint16_t kCrc16Key  = 0xFFFF;   // standard initial value
+static constexpr uint32_t MESSAGE_TIMEOUT_MS = 500;
 
 // Message type for the packet header
 enum class MsgType : uint8_t {
-	PreLaunchData         = 1, // Unsolicited message sent from the locator while in an unarmed state.
-	TelemetryData         = 2, // Unsolicited message sent from the locator while in an armed state.
-	FlightMetadataRequest = 3, // Request from the app, via the receiver, for high-level information necessary to identify each flight profile record archived by the locator.
-	FlightMetadata        = 4, // Flight profile metadata response from the locator to the app via the receiver.
-	FlightDataRequest     = 5, // Request from the app, via the receiver, for the data in one flight profile.
-	FlightData            = 6, // Flight profile data response from the locator to the app via the receiver consisting of multiple packets, which the app acknowledges via the receiver.
-	FlightDataParity      = 7, // Parity packet to allow the app to reconstruct profile data if one packet is lost.
-	FlightDataAck         = 8, // Profile data acknowledgement packet sent from the app via the receiver.
-	DeploymentTestRequest = 9, // Request from the app, via the receiver, for the locator to execute a deployment test.
-	DeploymentTest        = 10 // Deployment test countdown sent from the locator to the app via the receiver.
+	LocatorCfgChgRequest  = 1, // Request to update locator configuration sent from the app via the receiver.
+	ReceiverCfgChgRequest = 2, // Request to update receiver configuration sent from the app to the receiver.
+	ArmRequest            = 3, // Request to arm the locator sent from the app via the receiver.
+	DisarmRequest         = 4, // Request to disarm the locator sent from the app via the receiver.
+	PreLaunchData         = 5, // Unsolicited locator status sent from the locator while in an unarmed state.
+	TelemetryData         = 6, // Unsolicited locator status sent from the locator while in an armed state.
+	FlightMetadataRequest = 7, // Request from the app, via the receiver, for high-level information necessary to identify each flight profile record archived by the locator.
+	FlightMetadata        = 8, // Flight profile metadata response from the locator to the app via the receiver.
+	FlightDataRequest     = 9, // Request from the app, via the receiver, for the data in one flight profile.
+	FlightData            = 10, // Flight profile data response from the locator to the app via the receiver consisting of multiple packets, which the app acknowledges via the receiver.
+	FlightDataParity      = 11, // Parity packet to allow the app to reconstruct profile data if one packet is lost.
+	FlightDataAck         = 12, // Profile data acknowledgement sent from the app via the receiver.
+	DeploymentTestRequest = 13, // Request from the app, via the receiver, for the locator to execute a deployment test.
+	DeploymentTest        = 14 // Deployment test countdown sent from the locator to the app via the receiver.
 };
+
+enum class ParseState { IDLE, TYPE, COUNT1, COUNT2, CRC1, CRC2, DATA, VALIDATE };
 
 #pragma pack(push, 1)
 
@@ -137,6 +144,34 @@ struct ParsedMessage {
     PreLaunchData  prelaunch;
     TelemetryData  telemetry;
     DeploymentTestCountdownMessage deployment_test;
+};
+
+struct AppMessage {
+	PacketHeader header;
+    uint8_t payload[64];
+};
+
+struct LocatorRocketSettings
+{
+	PacketHeader header;
+
+	DeployMode deployment_ch1_mode = DeployMode::DroguePrimary;
+    DeployMode deployment_ch2_mode = DeployMode::DrogueBackup;
+    DeployMode deployment_ch3_mode = DeployMode::MainPrimary;
+    DeployMode deployment_ch4_mode = DeployMode::MainBackup;
+
+    uint16_t launch_detect_altitude;       // meters
+
+    uint8_t drogue_primary_deploy_delay;   // tenths of a second
+    uint8_t drogue_backup_deploy_delay;    // tenths of a second
+
+    uint16_t main_primary_deploy_altitude; // meters
+    uint16_t main_backup_deploy_altitude;  // meters
+
+    uint8_t deploy_signal_duration;        // tenths of a second
+    uint8_t lora_channel;
+
+    char device_name[device_name_length] = {0};
 };
 
 #pragma pack(pop)

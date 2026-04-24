@@ -33,7 +33,7 @@ bool Archive::Init() {
 	if (!runtimeStore_.Init()) { return false; }
 	RocketPersistentSettings defaultSettings{};
 	std::strncpy(defaultSettings.device_name, "Rocket01", device_name_length);
-	defaultSettings.device_name[device_name_length] = '\0';
+//	defaultSettings.device_name[device_name_length] = '\0';
 	RocketPersistentSettings settings{};
 	if (!persistentStore_.LoadOrDefault(settings, defaultSettings)) {
 		return false;

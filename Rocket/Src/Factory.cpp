@@ -23,7 +23,7 @@ Factory::Factory(UART_HandleTypeDef& huart1,
 			huart2_(huart2),
 			hspi2_(hspi2),
 			hadc_(hadc),
-			comm_(archive_, power_, huart1_),
+			comm_(archive_, power_, huart1_, huart2_),
 			flash_(&hspi2_, CSB_MEM_GPIO_Port, CSB_MEM_Pin),
 			archive_(flash_),
 			power_(&hadc) {
@@ -58,9 +58,11 @@ void Factory::OnUART1Char(uint8_t uart_char)
 {
     // Optional: if the phone app sends commands back
     // You can forward them to the locator or parse them here.
-    (void)uart_char;
+//    HAL_UART_Transmit(&huart2_, &uart_char, 1, 100);
+	comm_.OnUART1Char(uart_char);
 }
 
 void Factory::OnUART2Char(uint8_t uart_char) {
 //  config_.ProcessChar(uart_char, device_state_);
+    HAL_UART_Transmit(&huart2_, &uart_char, 1, 100);
 }

@@ -27,7 +27,6 @@
 
 /* Private includes ----------------------------------------------------------*/
 /* USER CODE BEGIN Includes */
-#include "usart.h"
 #include <stdio.h>
 #include "stm32wlxx_ll_usart.h"
 //#include "stm32wlxx_ll_gpio.h"
@@ -101,11 +100,18 @@ int main(void)
   MX_USART1_UART_Init();
   MX_ADC_Init();
   /* USER CODE BEGIN 2 */
-  LL_USART_EnableIT_RXNE(USART1);
-  LL_USART_EnableIT_ERROR(USART1);
+  // 2. THE INITIAL ARMING
+      // Call this exactly once before your main loop starts.
+      // This tells the hardware to start listening for the first byte.
+  __HAL_UART_CLEAR_IT(&huart1, UART_CLEAR_OREF | UART_CLEAR_NEF | UART_CLEAR_FEF);
+  HAL_UART_Receive_IT(&huart1, &bt_byte_, 1);
+//  LL_USART_EnableIT_RXNE(USART1);
+//  LL_USART_EnableIT_ERROR(USART1);
   MX_USART2_UART_Init();
-  LL_USART_EnableIT_RXNE(USART2);
-  LL_USART_EnableIT_ERROR(USART2);
+  __HAL_UART_CLEAR_IT(&huart2, UART_CLEAR_OREF | UART_CLEAR_NEF | UART_CLEAR_FEF);
+  HAL_UART_Receive_IT(&huart2, &charRx, 1);
+//  LL_USART_EnableIT_RXNE(USART2);
+//  LL_USART_EnableIT_ERROR(USART2);
   ReceiverFactory_Init(&Radio);
 
 	HAL_TIM_Base_Start(&htim2);
@@ -116,11 +122,13 @@ int main(void)
   /* USER CODE BEGIN WHILE */
 	while (1) {
 		ReceiverFactory_Service();
+#ifdef MX_SUBGHZ_PHY_PROCESS
     /* USER CODE END WHILE */
-		MX_SubGHz_Phy_Process();
+    MX_SubGHz_Phy_Process();
 
     /* USER CODE BEGIN 3 */
-  }
+#endif
+	}
   /* USER CODE END 3 */
 }
 
@@ -181,56 +189,81 @@ void LoraRxCallback(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraSn
 	ReceiverFactory_OnRadioRxDone(payload, size, rssi, LoraSnr_FskCfo);
 }
 
-void UART1_CharReception_Callback(void) {
-  /* Read Received character. RXNE flag is cleared by reading of RDR register */
-	ReceiverFactory_OnUART1Char(LL_USART_ReceiveData8(USART1));
-}
+void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart)
+{
+  // Check the hardware registers directly, as ErrorCode might be cleared
+  uint32_t isrflags = READ_REG(huart->Instance->ISR);
 
-void UART2_CharReception_Callback(void) {
-  /* Read Received character. RXNE flag is cleared by reading of RDR register */
-	ReceiverFactory_OnUART2Char(LL_USART_ReceiveData8(USART2));
-}
-
-void UART_TXEmpty_Callback(void) {
-}
-
-void UART_CharTransmitComplete_Callback(void) {
-}
-
-void UART_Error_Callback(void) {
-  //__IO uint32_t isr_reg;
-
-  // Disable USARTx_IRQn
-  /*NVIC_DisableIRQ(USART1_IRQn);
-
-  //Error handling example :
-  //  - Read USART ISR register to identify flag that leads to IT raising
-  //  - Perform corresponding error handling treatment according to flag
-
-  isr_reg = LL_USART_ReadReg(USART1, ISR);
-  if (isr_reg & LL_USART_ISR_NE)
+  if (huart->Instance == USART1)
   {
-    // Turn LED3 on: Transfer error in reception/transmission process
-    HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin); // LED_RED
-  }
-  else
-  {
-    // Turn LED3 on: Transfer error in reception/transmission process
-    HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin); // LED_RED
-  }*/
-}
+    // Check for Overrun (ORE) specifically
+    if (isrflags & USART_ISR_ORE)
+    {
+      __HAL_UART_CLEAR_IT(huart, UART_CLEAR_OREF);
+    }
 
-void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
-  if ((HAL_IS_BIT_SET(huart->Instance->CR3, USART_CR3_DMAR)) ||
-      ((huart->ErrorCode & (HAL_UART_ERROR_RTO | HAL_UART_ERROR_ORE)) != 0U))
-  {
-	  if (HAL_UART_Init(huart) != HAL_OK){
-	    Error_Handler();
-	  }
-	  LL_USART_EnableIT_RXNE(huart->Instance);
-		LL_USART_EnableIT_ERROR(huart->Instance);
+    // Check for Noise (NE) or Framing (FE)
+    if (isrflags & (USART_ISR_NE | USART_ISR_FE))
+    {
+      __HAL_UART_CLEAR_IT(huart, UART_CLEAR_NEF | UART_CLEAR_FEF);
+    }
+
+    // CRITICAL: The VG6328A requires 115200 baud[cite: 30, 105].
+    // If an error occurred, the RX state machine in HAL is now "Locked".
+    // You MUST reset the receive process here.
+    HAL_UART_Receive_IT(huart, &bt_byte_, 1);
   }
 }
+//void UART1_CharReception_Callback(void) {
+//  /* Read Received character. RXNE flag is cleared by reading of RDR register */
+//	ReceiverFactory_OnUART1Char(LL_USART_ReceiveData8(USART1));
+//}
+//
+//void UART2_CharReception_Callback(void) {
+//  /* Read Received character. RXNE flag is cleared by reading of RDR register */
+//	ReceiverFactory_OnUART2Char(LL_USART_ReceiveData8(USART2));
+//}
+//
+//void UART_TXEmpty_Callback(void) {
+//}
+//
+//void UART_CharTransmitComplete_Callback(void) {
+//}
+//
+//void UART_Error_Callback(void) {
+//  //__IO uint32_t isr_reg;
+//
+//  // Disable USARTx_IRQn
+//  /*NVIC_DisableIRQ(USART1_IRQn);
+//
+//  //Error handling example :
+//  //  - Read USART ISR register to identify flag that leads to IT raising
+//  //  - Perform corresponding error handling treatment according to flag
+//
+//  isr_reg = LL_USART_ReadReg(USART1, ISR);
+//  if (isr_reg & LL_USART_ISR_NE)
+//  {
+//    // Turn LED3 on: Transfer error in reception/transmission process
+//    HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin); // LED_RED
+//  }
+//  else
+//  {
+//    // Turn LED3 on: Transfer error in reception/transmission process
+//    HAL_GPIO_TogglePin(LED3_GPIO_Port, LED3_Pin); // LED_RED
+//  }*/
+//}
+//
+//void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart) {
+//  if ((HAL_IS_BIT_SET(huart->Instance->CR3, USART_CR3_DMAR)) ||
+//      ((huart->ErrorCode & (HAL_UART_ERROR_RTO | HAL_UART_ERROR_ORE)) != 0U))
+//  {
+//	  if (HAL_UART_Init(huart) != HAL_OK){
+//	    Error_Handler();
+//	  }
+//	  LL_USART_EnableIT_RXNE(huart->Instance);
+//		LL_USART_EnableIT_ERROR(huart->Instance);
+//  }
+//}
 
 //int _write(int file, char *ptr, int len) {
 //    for (int i = 0; i < len; i++) {
