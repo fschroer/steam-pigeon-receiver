@@ -16,9 +16,9 @@ public:
 	bool InitializeArchive();
 	bool IsInitialized();
 
-	RocketPersistentSettings& GetLocatorSettings() { return locator_settings_; }
-	const RocketPersistentSettings& GetLocatorSettings() const { return locator_settings_; }
-	bool SaveLocatorSettings(RocketPersistentSettings& locator_settings);
+	RocketPersistentSettings& GetReceiverSettings() { return receiver_settings_; }
+	const RocketPersistentSettings& GetReceiverSettings() const { return receiver_settings_; }
+	bool SaveReceiverSettings(RocketPersistentSettings& receiver_settings_);
 private:
 	static PersistentSettingsStore::Config MakePersistentStore();
 	static RuntimeMetadataStore::Config MakeRuntimeStore();
@@ -26,5 +26,10 @@ private:
 	IFlashDriver& flash_;
 	PersistentSettingsStore persistentStore_;
 	RuntimeMetadataStore runtimeStore_;
-	RocketPersistentSettings locator_settings_ {};
+	RocketPersistentSettings default_settings_ { };
+	RocketPersistentSettings receiver_settings_ {};
+	RocketRuntimeMetadata runtime_defaults_ { };
+	RocketRuntimeMetadata runtime_ { };
+	bool runtime_saved_ = false;
+	bool settings_saved_ = false;
 };

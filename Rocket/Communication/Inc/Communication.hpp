@@ -19,6 +19,53 @@ enum class ParseResult {
     UnknownType
 };
 
+template<typename T>
+ParseResult decode_into(const uint8_t* data, std::size_t len, T& out)
+{
+    static_assert(std::is_trivially_copyable_v<T>,
+                  "Message type must be trivially copyable");
+
+    if (len != sizeof(T))
+        return ParseResult::LengthMismatch;
+
+    std::memcpy(&out, data, sizeof(T));
+    return ParseResult::Ok;
+}
+
+template<MsgType M> struct MsgTraits;
+
+template<> struct MsgTraits<MsgType::Startup> {
+    using type = StartupMessage;
+    static constexpr auto field = &ParsedMessage::startup;
+};
+
+template<> struct MsgTraits<MsgType::PreLaunchData> {
+    using type = PreLaunchData;
+    static constexpr auto field = &ParsedMessage::prelaunch;
+};
+
+template<> struct MsgTraits<MsgType::TelemetryData> {
+    using type = TelemetryData;
+    static constexpr auto field = &ParsedMessage::telemetry;
+};
+
+template<> struct MsgTraits<MsgType::DeploymentTest> {
+    using type = DeploymentTestCountdownMessage;
+    static constexpr auto field = &ParsedMessage::deployment_test;
+};
+
+template<MsgType M>
+ParseResult decode_message(const uint8_t* data, std::size_t len, ParsedMessage& out)
+{
+    auto field = MsgTraits<M>::field;
+
+    auto result = decode_into(data, len, out.*field);
+    if (result == ParseResult::Ok)
+        out.type = M;
+
+    return result;
+}
+
 // Simple radio interface so we don't hide globals
 class IRadio
 {
@@ -29,10 +76,6 @@ public:
     virtual void SetChannel(uint32_t freq) = 0;
 };
 
-static uint32_t last_rx_end_ms_ = 0;
-static uint32_t current_tick_ = 0;
-static bool rx_led_status_serviced_ = true;
-
 class Communication{
 public:
 	Communication(Archive& archive, PowerManagement& power, UART_HandleTypeDef& huart1, UART_HandleTypeDef& huart2);
@@ -40,6 +83,7 @@ public:
 	void SetChannel(uint8_t channel);
 	void OnRadioTxDone();   // called from ISR/callback
 	void OnRadioRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraSnr_FskCfo);   // ACK reception handler
+	void ProcessRadioRx();
 	void ForwardToBluetooth(const uint8_t* buf, std::size_t len);
 	void UpdateStatusLeds();
 	void OnUART1Char(uint8_t uart_char);
@@ -52,8 +96,11 @@ private:
 	IRadio* radio_ = nullptr;
 
 	bool radio_busy_ = false;
+	uint32_t current_tick_ = 0;
 	uint32_t last_tx_end_ms_ = 0;
 	bool tx_led_status_serviced_ = true;
+	uint32_t last_rx_end_ms_ = 0;
+	bool rx_led_status_serviced_ = true;
 
 	ParseState parse_state_ = ParseState::IDLE;
 	uint32_t last_byte_time_ = 0;
@@ -61,17 +108,28 @@ private:
 	uint8_t cursor_ = 0;
 	uint8_t message_length_;
 
+	uint8_t rx_payload_[kMaxPayloadBytes];
+	uint16_t rx_message_size_;
+	int16_t rssi_;
+	int8_t LoraSnr_FskCfo_;
+
 	const char* lora_startup_message_ = "Rocket Receiver v1.0.1\r\n\0";
 	const char* usb_connected_ = "Disconnect USB cable before arming locator\r\n\0";
 	const char* bad_gps_data_ = "Bad GPS Data\r\n\0";
 	static constexpr char query_version_[] = "AT+VERS\r\n";
 	static constexpr char command_mode_[] = "AT+ENAT\r\n";
 	static constexpr char data_mode_[] = "AT+EXAT\r\n";
-	static constexpr char enable_spp_broadcast_[] = "AT+SPON\r\n";
-	static constexpr char change_spp_name_[] = "AT+SPNASPReceiver2\r\n";
+	static constexpr char enable_ble_broadcast_[] = "AT+LEON\r\n";
+	static constexpr char disable_spp_broadcast_[] = "AT+SPOF\r\n";
+	static constexpr char change_spp_name_[] = "AT+SPNA";
+	static constexpr char change_ble_name_[] = "AT+LENA";
 	static constexpr char reset_[] = "AT+REST\r\n";
-	static constexpr char at_test_[] = "AT\r\n";
+	static constexpr char factory_reset_[] = "AT+RDEF\r\n";
+	static constexpr char ble_msb16_[] = "D867"; // Unique ID for Steam Pigeon receivers
+	static constexpr char set_ble_address_[] = "AT+LEAD";
 
+	uint32_t random_u32();
+	void u32_to_hex(char* out, uint32_t value);
 	ParseResult ParseLoraFrame(const uint8_t* data,
 							 std::size_t   len,
 							 uint8_t       expected_system_id,

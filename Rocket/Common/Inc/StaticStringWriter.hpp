@@ -19,7 +19,12 @@ public:
     constexpr void Clear() { buffer_.Clear(); }
 
     template <typename... Args>
-    bool WriteMany(const Args&... args) { return buffer_.AppendMany(args...); }
+    bool WriteMany(const Args&... args) {
+    	Clear();
+    	bool success = buffer_.AppendMany(args...);
+    	Flush();
+    	return success;
+    }
 
     bool WritePadded(std::string_view sv, std::size_t width, char pad_char = ' ') {
         return buffer_.AppendPadded(sv, width, pad_char);

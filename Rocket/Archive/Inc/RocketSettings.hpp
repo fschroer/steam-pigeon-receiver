@@ -13,6 +13,7 @@ struct RocketPersistentSettings
 {
     uint8_t lora_channel = 0;
     char device_name[device_name_length] = {0};
+    uint32_t ble_address_lsb32 = 0;
 };
 
 struct RocketRuntimeMetadata

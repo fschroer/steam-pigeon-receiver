@@ -12,11 +12,8 @@ enum class DeployMode : uint8_t {
 };
 
 enum class DeviceState : uint8_t {
-	Disarmed = 0,
-	Armed,
-	Config,
-	Test,
-	DataRequested
+	Receive = 0,
+	Config
 };
 
 enum class UnitSystem : uint8_t {
