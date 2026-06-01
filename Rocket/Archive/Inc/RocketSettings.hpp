@@ -5,7 +5,7 @@
 #include <type_traits>
 #include <cstring>
 
-constexpr std::size_t device_name_length = 12;
+constexpr std::size_t device_name_length = 20;
 
 #pragma pack(push, 1)
 
@@ -13,7 +13,6 @@ struct RocketPersistentSettings
 {
     uint8_t lora_channel = 0;
     char device_name[device_name_length] = {0};
-    uint32_t ble_address_lsb32 = 0;
 };
 
 struct RocketRuntimeMetadata

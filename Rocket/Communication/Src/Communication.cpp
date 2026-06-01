@@ -16,9 +16,9 @@ namespace Communication {
 
 using Header = PacketHeader;
 
-Communication::Communication(Archive &archive, PowerManagement &power, UART_HandleTypeDef &huart1,
+Communication::Communication(DeviceUID &deviceUID, Archive &archive, PowerManagement &power, UART_HandleTypeDef &huart1,
 		UART_HandleTypeDef &huart2) :
-		archive_(archive), power_(power), huart1_(huart1), huart2_(huart2) {
+		deviceUID_(deviceUID), archive_(archive), power_(power), huart1_(huart1), huart2_(huart2) {
 }
 
 void Communication::Init(IRadio &radio) {
@@ -41,19 +41,16 @@ void Communication::Init(IRadio &radio) {
 	change_spp_name[sizeof(change_ble_name_) - 1 + i++] = '\n';
 
 	// Generate BLE address
-	if (settings.ble_address_lsb32 == 0) {
-		settings.ble_address_lsb32 = random_u32();
-		archive_.SaveReceiverSettings(settings);
-	}
-	char ble_address[] = "00000000";
-	u32_to_hex(ble_address, settings.ble_address_lsb32);
-	char set_ble_address[sizeof(set_ble_address_) - 1 + sizeof(ble_msb16_) - 1 + sizeof(ble_address) - 1 + 2] = { 0 };
+	uint32_t ble_address_lsb32 = deviceUID_.getUID();
+	char ble_address_lsb32_text[] = "00000000";
+	Uint32ToHex(ble_address_lsb32_text, ble_address_lsb32);
+	char set_ble_address[sizeof(set_ble_address_) - 1 + sizeof(ble_msb16_) - 1 + sizeof(ble_address_lsb32_text) - 1 + 2] = { 0 };
 	std::memcpy(set_ble_address, set_ble_address_, sizeof(set_ble_address_) - 1);
 	std::memcpy(set_ble_address + sizeof(set_ble_address_) - 1, ble_msb16_, sizeof(ble_msb16_) - 1);
-	std::memcpy(set_ble_address + sizeof(set_ble_address_) - 1 + sizeof(ble_msb16_) - 1, ble_address,
-			sizeof(ble_address) - 1);
-	set_ble_address[sizeof(set_ble_address_) - 1 + sizeof(ble_msb16_) - 1 + sizeof(ble_address) - 1] = '\r';
-	set_ble_address[sizeof(set_ble_address_) - 1 + sizeof(ble_msb16_) - 1 + sizeof(ble_address)] = '\n';
+	std::memcpy(set_ble_address + sizeof(set_ble_address_) - 1 + sizeof(ble_msb16_) - 1, ble_address_lsb32_text,
+			sizeof(ble_address_lsb32_text) - 1);
+	set_ble_address[sizeof(set_ble_address_) - 1 + sizeof(ble_msb16_) - 1 + sizeof(ble_address_lsb32_text) - 1] = '\r';
+	set_ble_address[sizeof(set_ble_address_) - 1 + sizeof(ble_msb16_) - 1 + sizeof(ble_address_lsb32_text)] = '\n';
 
 	HAL_UART_Transmit(&huart1_, (uint8_t*) command_mode_, (sizeof(command_mode_) - 1), 100);
 	HAL_Delay(100);
@@ -69,36 +66,21 @@ void Communication::Init(IRadio &radio) {
 	HAL_Delay(100);
 }
 
-uint32_t Communication::random_u32() {
-	static uint32_t x = 0xA5A5A5A5; // seed (choose any non-zero value)
-	x ^= x << 13;
-	x ^= x >> 17;
-	x ^= x << 5;
-	return x;
-}
-
-void Communication::u32_to_hex(char *out, uint32_t value) {
-	static const char lut[] = "0123456789ABCDEF";
-
-	for (int i = 0; i < 8; i++) {
-		uint32_t shift = (7 - i) * 4;
-		out[i] = lut[(value >> shift) & 0xF];
-	}
-	out[8] = '\0';
-}
-
 void Communication::SetChannel(uint8_t channel) {
 	radio_->SetChannel(902300000 + channel * 200000);
 }
 
 void Communication::OnRadioTxDone() {
 	radio_busy_ = false;
-	SoftLed(4, LedState::On);
-	last_tx_end_ms_ = HAL_GetTick();
-	tx_led_status_serviced_ = false;
+	RgbLed(RgbColor::Blue, LedState::On);
+	last_radio_tx_end_ms_ = HAL_GetTick();
+	radio_tx_led_status_serviced_ = false;
 }
 
 void Communication::OnRadioRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraSnr_FskCfo) {
+	RgbLed(RgbColor::Green, LedState::On);
+	last_radio_rx_end_ms_ = HAL_GetTick();
+	radio_rx_led_status_serviced_ = false;
 	std::memcpy(rx_payload_, payload, size);
 	rx_message_size_ = size;
 	rssi_ = rssi;
@@ -129,80 +111,91 @@ void Communication::ProcessRadioRx() {
 			break;
 		}
 		}
-		SoftLed(5, LedState::On);
-		last_rx_end_ms_ = HAL_GetTick();
-		rx_led_status_serviced_ = false;
+		RgbLed(RgbColor::Green, LedState::On);
+		last_radio_rx_end_ms_ = HAL_GetTick();
+		radio_rx_led_status_serviced_ = false;
 	} else {
 		RgbLed(RgbColor::Red, LedState::On);
 		return;
 	}
-
-//	SoftLed(4, LedState::On);
-//	last_rx_end_ms_ = HAL_GetTick();
-//	rx_led_status_serviced_ = false;
 }
 
 void Communication::ForwardToBluetooth(const uint8_t *buf, std::size_t len) {
 	// Blocking UART transmit; you can switch to DMA if you want.
+	last_bt_tx_end_ms_ = HAL_GetTick();
+	bt_tx_led_status_serviced_ = false;
+	SoftLed(4, LedState::On);
 	HAL_UART_Transmit(&huart1_, const_cast<uint8_t*>(buf), static_cast<uint16_t>(len), 100);
 }
 
 void Communication::UpdateStatusLeds() {
 	current_tick_ = HAL_GetTick();
-	if (!tx_led_status_serviced_ && current_tick_ - last_tx_end_ms_ > 100) {
-		SoftLed(4, LedState::Off);
-		tx_led_status_serviced_ = true;
+	if (!radio_tx_led_status_serviced_ && current_tick_ - last_radio_tx_end_ms_ > 100) {
+		RgbLed(RgbColor::Blue, LedState::Off);
+		radio_tx_led_status_serviced_ = true;
 	}
-	if (!rx_led_status_serviced_ && current_tick_ - last_rx_end_ms_ > 100) {
-		RgbLed(RgbColor::Red, LedState::Off);
+	if (!radio_rx_led_status_serviced_ && current_tick_ - last_radio_rx_end_ms_ > 100) {
+		RgbLed(RgbColor::Green, LedState::Off);
+		radio_rx_led_status_serviced_ = true;
+	}
+	if (!bt_tx_led_status_serviced_ && current_tick_ - last_bt_tx_end_ms_ > 100) {
+		SoftLed(4, LedState::Off);
+		bt_tx_led_status_serviced_ = true;
+	}
+	if (!bt_rx_led_status_serviced_ && current_tick_ - last_bt_rx_end_ms_ > 100) {
 		SoftLed(5, LedState::Off);
-		rx_led_status_serviced_ = true;
+		bt_rx_led_status_serviced_ = true;
 	}
 }
 
-ParseResult Communication::ParseLoraFrame(const uint8_t* data,
-                                          std::size_t len,
-                                          uint8_t expected_system_id,
-                                          ParsedMessage& out)
-{
-    using namespace Communication;
+ParseResult Communication::ParseLoraFrame(const uint8_t *data, std::size_t len, uint8_t expected_system_id,
+		ParsedMessage &out) {
+	using namespace Communication;
 
-    if (len < sizeof(PacketHeader))
-        return ParseResult::TooShort;
+	if (len < sizeof(PacketHeader))
+		return ParseResult::TooShort;
 
-    // Extract header
-    PacketHeader hdr{};
-    std::memcpy(&hdr, data, sizeof(PacketHeader));
+	// Extract header
+	PacketHeader hdr { };
+	std::memcpy(&hdr, data, sizeof(PacketHeader));
 
-    // System ID check
-    if (hdr.system_id != expected_system_id)
-        return ParseResult::SystemIdMismatch;
+	// System ID check
+	if (hdr.system_id != expected_system_id)
+		return ParseResult::SystemIdMismatch;
 
-    // CRC check
-    if (!ValidateCRC(data, len))
-        return ParseResult::CrcMismatch;
+	// CRC check
+	if (!ValidateCRC(data, len))
+		return ParseResult::CrcMismatch;
 
-    // Dispatch by message type
-    switch (hdr.msg_type)
-    {
-    case MsgType::Startup:
-        return decode_message<MsgType::Startup>(data, len, out);
+	// Dispatch by message type
+	switch (hdr.msg_type) {
+	case MsgType::Startup:
+		return decode_message<MsgType::Startup>(data, len, out);
 
-    case MsgType::PreLaunchData:
-        return decode_message<MsgType::PreLaunchData>(data, len, out);
+	case MsgType::PreLaunchData:
+		return decode_message<MsgType::PreLaunchData>(data, len, out);
 
-    case MsgType::TelemetryData:
-        return decode_message<MsgType::TelemetryData>(data, len, out);
+	case MsgType::TelemetryData:
+		return decode_message<MsgType::TelemetryData>(data, len, out);
 
-    case MsgType::DeploymentTest:
-        return decode_message<MsgType::DeploymentTest>(data, len, out);
+	case MsgType::DeploymentTest:
+		return decode_message<MsgType::DeploymentTest>(data, len, out);
 
-    default:
-        return ParseResult::UnknownType;
-    }
+	case MsgType::FlightMetadata:
+		return decode_message<MsgType::FlightMetadata>(data, len, out);
+
+	case MsgType::FlightData:
+		return decode_message<MsgType::FlightData>(data, len, out);
+
+	default:
+		return ParseResult::UnknownType;
+	}
 }
 
 void Communication::OnUART1Char(uint8_t uart_char) {
+	last_bt_rx_end_ms_ = HAL_GetTick();
+	bt_rx_led_status_serviced_ = false;
+	SoftLed(5, LedState::On);
 	uint32_t current_byte_time = HAL_GetTick();
 	if (parse_state_ != ParseState::IDLE && (current_byte_time - last_byte_time_ > MESSAGE_TIMEOUT_MS)) {
 		Reset(); // Dump the buffer if the app stops mid-stream
@@ -292,9 +285,10 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 				archive_.SaveReceiverSettings(receiver_settings);
 				SetChannel(receiver_settings.lora_channel);
 			} else {
-				if (ValidateCRC(reinterpret_cast<const uint8_t*>(&current_msg_), sizeof(PacketHeader) + message_length_)) {
-					radio_->Send(reinterpret_cast<const uint8_t*>(&current_msg_), sizeof(PacketHeader) + message_length_);
-					RgbLed(RgbColor::Green, LedState::On);
+				if (ValidateCRC(reinterpret_cast<const uint8_t*>(&current_msg_),
+						sizeof(PacketHeader) + message_length_)) {
+					radio_->Send(reinterpret_cast<const uint8_t*>(&current_msg_),
+							sizeof(PacketHeader) + message_length_);
 				}
 			}
 			Reset();

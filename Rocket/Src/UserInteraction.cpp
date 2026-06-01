@@ -38,8 +38,7 @@ void UserInteraction::ProcessChar(uint8_t uart_char, DeviceState &device_state) 
 					device_state = DeviceState::Config;
 					user_interaction_state_ = UserInteractionState::ConfigHome;
 					lora_channel_ = receiver_settings.lora_channel;
-					for (uint8_t i = 0; i < device_name_length; i++)
-						device_name_[i] = receiver_settings.device_name[i];
+					std::memcpy(device_name_, receiver_settings.device_name, device_name_length);
 					DisplayConfigSettingsMenu();
 				} else if (std::memcmp(user_input_, dfu_command_, char_pos) == 0) {
 					device_state = DeviceState::Config;
@@ -59,8 +58,7 @@ void UserInteraction::ProcessChar(uint8_t uart_char, DeviceState &device_state) 
 		switch (uart_char) {
 		case 13: // Enter key
 			receiver_settings.lora_channel = lora_channel_;
-			for (uint8_t i = 0; i < device_name_length; i++)
-				receiver_settings.device_name[i] = device_name_[i];
+			std::memcpy(receiver_settings.device_name, device_name_, device_name_length);
 			archive_.SaveReceiverSettings(receiver_settings);
 			comm_.SetChannel(lora_channel_);
 			device_state = DeviceState::Receive;
@@ -152,7 +150,7 @@ void UserInteraction::AdjustConfigTextSetting(uint8_t uart_char, char *config_mo
 	} else if (uart_char == 8 && char_pos > 0) {
 		HAL_UART_Transmit(&huart2_, (uint8_t*) bs_, 3, uart_timeout);
 		user_input_[--char_pos] = 0;
-	} else if (uart_char >= ' ' && uart_char <= '~' && char_pos < device_name_length) {
+	} else if (uart_char >= ' ' && uart_char <= '~' && char_pos < device_name_length - 1) {
 		HAL_UART_Transmit(&huart2_, &uart_char, 1, uart_timeout);
 		user_input_[char_pos++] = uart_char;
 	}

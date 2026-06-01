@@ -66,6 +66,7 @@ void UART2_CharReception_Callback(void);
 void UART_TXEmpty_Callback(void);
 void UART_CharTransmitComplete_Callback(void);
 void UART_Error_Callback(void);
+void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart);
 void HAL_UART_ErrorCallback(UART_HandleTypeDef *huart);
 void HAL_TIM_PeriodElapsedCallback(TIM_HandleTypeDef *htim);
 void HAL_GPIO_EXTI_Callback(uint16_t GPIO_Pin);

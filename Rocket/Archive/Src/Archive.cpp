@@ -1,5 +1,6 @@
-#include <CompactSettingsJournal.hpp>
 #include "Archive.hpp"
+#include "CompactSettingsJournal.hpp"
+#include "Format.hpp"
 
 constexpr SystemFlashLayout layout =
         MakeSettingsFlashLayout(
@@ -23,15 +24,20 @@ RuntimeMetadataStore::Config Archive::MakeRuntimeStore()
 	return runtime_cfg;
 }
 
-Archive::Archive(IFlashDriver& flash)
-	: flash_(flash),
+Archive::Archive(DeviceUID& deviceUID, IFlashDriver& flash)
+	: deviceUID_(deviceUID), flash_(flash),
 		persistentStore_(flash_, MakePersistentStore()),
 		runtimeStore_(flash_, MakeRuntimeStore()) {}
 
 bool Archive::Init() {
 	if (!persistentStore_.Init()) {	return false; }
 	if (!runtimeStore_.Init()) { return false; }
-	std::strncpy(default_settings_.device_name, "Rocket01", device_name_length);
+	std::memcpy(default_settings_.device_name, "Receiver ", 9);
+	uint32_t device_num = deviceUID_.getUID();
+	char device_num_text[] = "00000000";
+	Uint32ToHex(device_num_text, device_num);
+	std::memcpy(default_settings_.device_name + 9, device_num_text, 8);
+	default_settings_.device_name[17] = 0;
 	if (!persistentStore_.LoadOrDefault(receiver_settings_, default_settings_)) {
 		return false;
 	}

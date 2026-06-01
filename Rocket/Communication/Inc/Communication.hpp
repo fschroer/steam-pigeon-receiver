@@ -7,6 +7,7 @@ extern "C" {
 #include <type_traits>
 #include "PowerManagement.hpp"
 #include "MessageProtocol.hpp"
+#include "DeviceUID.hpp"
 
 namespace Communication {
 
@@ -54,6 +55,16 @@ template<> struct MsgTraits<MsgType::DeploymentTest> {
     static constexpr auto field = &ParsedMessage::deployment_test;
 };
 
+template<> struct MsgTraits<MsgType::FlightMetadata> {
+    using type = FlightMetadata;
+    static constexpr auto field = &ParsedMessage::flight_metadata;
+};
+
+template<> struct MsgTraits<MsgType::FlightData> {
+    using type = FlightDataPacket;
+    static constexpr auto field = &ParsedMessage::flight_data_packet;
+};
+
 template<MsgType M>
 ParseResult decode_message(const uint8_t* data, std::size_t len, ParsedMessage& out)
 {
@@ -78,7 +89,7 @@ public:
 
 class Communication{
 public:
-	Communication(Archive& archive, PowerManagement& power, UART_HandleTypeDef& huart1, UART_HandleTypeDef& huart2);
+	Communication(DeviceUID& deviceUID, Archive& archive, PowerManagement& power, UART_HandleTypeDef& huart1, UART_HandleTypeDef& huart2);
 	void Init(IRadio& radio);
 	void SetChannel(uint8_t channel);
 	void OnRadioTxDone();   // called from ISR/callback
@@ -89,6 +100,7 @@ public:
 	void OnUART1Char(uint8_t uart_char);
 
 private:
+	DeviceUID& deviceUID_;
 	Archive& archive_;
 	PowerManagement& power_;
 	UART_HandleTypeDef& huart1_;
@@ -97,10 +109,14 @@ private:
 
 	bool radio_busy_ = false;
 	uint32_t current_tick_ = 0;
-	uint32_t last_tx_end_ms_ = 0;
-	bool tx_led_status_serviced_ = true;
-	uint32_t last_rx_end_ms_ = 0;
-	bool rx_led_status_serviced_ = true;
+	uint32_t last_radio_tx_end_ms_ = 0;
+	bool radio_tx_led_status_serviced_ = true;
+	uint32_t last_radio_rx_end_ms_ = 0;
+	bool radio_rx_led_status_serviced_ = true;
+	uint32_t last_bt_tx_end_ms_ = 0;
+	bool bt_tx_led_status_serviced_ = true;
+	uint32_t last_bt_rx_end_ms_ = 0;
+	bool bt_rx_led_status_serviced_ = true;
 
 	ParseState parse_state_ = ParseState::IDLE;
 	uint32_t last_byte_time_ = 0;
@@ -128,8 +144,6 @@ private:
 	static constexpr char ble_msb16_[] = "D867"; // Unique ID for Steam Pigeon receivers
 	static constexpr char set_ble_address_[] = "AT+LEAD";
 
-	uint32_t random_u32();
-	void u32_to_hex(char* out, uint32_t value);
 	ParseResult ParseLoraFrame(const uint8_t* data,
 							 std::size_t   len,
 							 uint8_t       expected_system_id,

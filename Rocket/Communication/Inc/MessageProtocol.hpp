@@ -56,6 +56,7 @@ constexpr size_t kPayloadSize = kMaxPayloadBytes - sizeof(PacketHeader)   // hea
 
 struct StartupMessage {
 	PacketHeader packet_header;
+	uint32_t serial_number;
 	uint8_t version[64];
 };
 
@@ -152,6 +153,8 @@ struct ParsedMessage {
     	StartupMessage startup;
     	PreLaunchData prelaunch;
     	TelemetryData telemetry;
+    	FlightMetadata flight_metadata;
+    	FlightDataPacket flight_data_packet;
     	DeploymentTestCountdownMessage deployment_test;
 //        PacketHeader packet_header;
     };

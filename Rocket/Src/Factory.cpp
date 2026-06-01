@@ -16,9 +16,9 @@ constexpr bool test_mode = false;
 
 Factory::Factory(UART_HandleTypeDef &huart1, UART_HandleTypeDef &huart2, SPI_HandleTypeDef &hspi2,
 		ADC_HandleTypeDef &hadc) :
-		huart1_(huart1), huart2_(huart2), hspi2_(hspi2), hadc_(hadc), comm_(archive_, power_, huart1_, huart2_), flash_(
-				&hspi2_, CSB_MEM_GPIO_Port, CSB_MEM_Pin), archive_(flash_), config_(comm_, archive_, huart2_), power_(
-				&hadc) {
+		huart1_(huart1), huart2_(huart2), hspi2_(hspi2), hadc_(hadc), comm_(deviceUID_, archive_, power_, huart1_,
+				huart2_), flash_(&hspi2_, CSB_MEM_GPIO_Port, CSB_MEM_Pin), archive_(deviceUID_, flash_), config_(comm_,
+				archive_, huart2_), power_(&hadc) {
 }
 
 void Factory::Init(const Radio_s *radio) {
@@ -33,10 +33,6 @@ void Factory::Init(const Radio_s *radio) {
 
 void Factory::Service() {
 	comm_.UpdateStatusLeds();
-}
-
-void Factory::ForwardToBluetooth(const uint8_t *data, std::size_t len) {
-	HAL_UART_Transmit(&huart1, (uint8_t*) data, len, 100);
 }
 
 void Factory::OnRadioTxDone() {

@@ -3,15 +3,16 @@
 #include "FlashDriver.hpp"
 #include "RocketSettings.hpp"
 #include "SystemFlashLayout.hpp"
+#include "DeviceUID.hpp"
 
 constexpr uint8_t record_count = 10;
 
 using PersistentSettingsStore = SettingsStorage::CompactSettingsJournal<RocketPersistentSettings>;
 using RuntimeMetadataStore    = SettingsStorage::CompactSettingsJournal<RocketRuntimeMetadata>;
 
-class Archive{
+class Archive {
 public:
-	explicit Archive(IFlashDriver& flash);
+	explicit Archive(DeviceUID& deviceUID, IFlashDriver& flash);
 	bool Init();
 	bool InitializeArchive();
 	bool IsInitialized();
@@ -23,6 +24,7 @@ private:
 	static PersistentSettingsStore::Config MakePersistentStore();
 	static RuntimeMetadataStore::Config MakeRuntimeStore();
 
+	DeviceUID& deviceUID_;
 	IFlashDriver& flash_;
 	PersistentSettingsStore persistentStore_;
 	RuntimeMetadataStore runtimeStore_;

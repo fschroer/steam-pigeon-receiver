@@ -40,6 +40,7 @@ private:
 	ADC_HandleTypeDef &hadc_;
 	const Radio_s *radio_ = nullptr;
 
+	DeviceUID deviceUID_;
 	Communication::Communication comm_;
 	MX25L4006E flash_;
 	Archive archive_;

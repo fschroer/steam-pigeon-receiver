@@ -59,6 +59,9 @@ void MX_GPIO_Init(void)
   HAL_GPIO_WritePin(GPIOA, SOFT_LED2_Pin|SOFT_LED1_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pin Output Level */
+  HAL_GPIO_WritePin(BATTRD_GPIO_Port, BATTRD_Pin, GPIO_PIN_RESET);
+
+  /*Configure GPIO pin Output Level */
   HAL_GPIO_WritePin(CSB_MEM_GPIO_Port, CSB_MEM_Pin, GPIO_PIN_SET);
 
   /*Configure GPIO pins : SOFT_LED5_Pin SOFT_LED2_Pin SOFT_LED1_Pin SOFT_LED4_Pin */
@@ -68,18 +71,12 @@ void MX_GPIO_Init(void)
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
   HAL_GPIO_Init(GPIOA, &GPIO_InitStruct);
 
-  /*Configure GPIO pin : SOFT_LED3_Pin */
-  GPIO_InitStruct.Pin = SOFT_LED3_Pin;
+  /*Configure GPIO pins : SOFT_LED3_Pin BATTRD_Pin */
+  GPIO_InitStruct.Pin = SOFT_LED3_Pin|BATTRD_Pin;
   GPIO_InitStruct.Mode = GPIO_MODE_OUTPUT_PP;
   GPIO_InitStruct.Pull = GPIO_NOPULL;
   GPIO_InitStruct.Speed = GPIO_SPEED_FREQ_LOW;
-  HAL_GPIO_Init(SOFT_LED3_GPIO_Port, &GPIO_InitStruct);
-
-  /*Configure GPIO pin : BATTRD_Pin */
-  GPIO_InitStruct.Pin = BATTRD_Pin;
-  GPIO_InitStruct.Mode = GPIO_MODE_INPUT;
-  GPIO_InitStruct.Pull = GPIO_NOPULL;
-  HAL_GPIO_Init(BATTRD_GPIO_Port, &GPIO_InitStruct);
+  HAL_GPIO_Init(GPIOB, &GPIO_InitStruct);
 
   /*Configure GPIO pin : BT_LED_Pin */
   GPIO_InitStruct.Pin = BT_LED_Pin;
