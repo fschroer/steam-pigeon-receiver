@@ -92,6 +92,9 @@ void Communication::ProcessRadioRx() {
 	if (ParseLoraFrame(rx_payload_, rx_message_size_, system_id, parsed) == ParseResult::Ok) {
 		switch (parsed.type) {
 		case MsgType::PreLaunchData: {
+			last_prelaunch_rx_ms_    = HAL_GetTick();
+			prelaunch_ever_received_ = true;
+			in_flight_data_mode_     = false;  // locator returned to Disarmed
 			PreLaunchMessageExtended ext { };
 			// Copy the original message
 			std::memcpy(&ext.base, &parsed.prelaunch, sizeof(PreLaunchData));
@@ -107,6 +110,10 @@ void Communication::ProcessRadioRx() {
 			break;
 		}
 		default: {
+			// FlightData / FlightDataParity — locator is in DataRequested;
+			// suppress the PreLaunchData timing gate for outbound messages.
+			if (parsed.type == MsgType::FlightData || parsed.type == MsgType::FlightDataParity)
+				in_flight_data_mode_ = true;
 			ForwardToBluetooth(rx_payload_, rx_message_size_);
 			break;
 		}
@@ -185,11 +192,35 @@ ParseResult Communication::ParseLoraFrame(const uint8_t *data, std::size_t len, 
 		return decode_message<MsgType::FlightMetadata>(data, len, out);
 
 	case MsgType::FlightData:
-		return decode_message<MsgType::FlightData>(data, len, out);
+	case MsgType::FlightDataParity:
+		// Variable-length packets: accept any size down to the fixed header fields.
+		// The receiver only forwards these raw; it does not decode the payload.
+		if (len < sizeof(PacketHeader) + 2 + 2 + 2 + 4)
+			return ParseResult::TooShort;
+		out.type = hdr.msg_type;
+		return ParseResult::Ok;
 
 	default:
 		return ParseResult::UnknownType;
 	}
+}
+
+void Communication::ServicePendingTx() {
+	if (!pending_tx_.ready)
+		return;
+
+	// Only apply the PreLaunchData collision-avoidance window when the locator
+	// is still sending PreLaunchData.  Once FlightData packets are flowing the
+	// locator is in DataRequested and no more PreLaunchData will come.
+	if (!in_flight_data_mode_ && prelaunch_ever_received_) {
+		const uint32_t elapsed = HAL_GetTick() - last_prelaunch_rx_ms_;
+		if (elapsed >= kPrelaunchDangerStartMs && elapsed < kPrelaunchDangerEndMs)
+			return;  // hold until past the expected PreLaunchData TX window
+	}
+
+	radio_->Send(reinterpret_cast<const uint8_t*>(&pending_tx_.msg),
+			sizeof(PacketHeader) + pending_tx_.len);
+	pending_tx_.ready = false;
 }
 
 void Communication::OnUART1Char(uint8_t uart_char) {
@@ -234,7 +265,7 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 			message_length_ = 1;
 			break;
 		case MsgType::FlightDataAck:
-			message_length_ = 0;
+			message_length_ = sizeof(FlightDataAck) - sizeof(PacketHeader);
 			break;
 		case MsgType::DeploymentTestRequest:
 			message_length_ = 1;
@@ -265,8 +296,12 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 	case ParseState::CRC2:
 		current_msg_.header.crc = (current_msg_.header.crc & 0xff) | ((uint16_t) uart_char << 8);
 		if (cursor_ >= message_length_) {
+			// Zero-payload message (e.g. ArmRequest, DisarmRequest).
+			// Validate CRC and queue for timed forwarding to the locator.
 			if (ValidateCRC(reinterpret_cast<const uint8_t*>(&current_msg_), sizeof(PacketHeader) + message_length_)) {
-				radio_->Send(reinterpret_cast<const uint8_t*>(&current_msg_), sizeof(PacketHeader) + message_length_);
+				pending_tx_.msg   = current_msg_;
+				pending_tx_.len   = message_length_;
+				pending_tx_.ready = true;
 			}
 			Reset();
 		} else {
@@ -278,6 +313,7 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 		current_msg_.payload[cursor_++] = uart_char;
 		if (cursor_ >= message_length_) {
 			if (current_msg_.header.msg_type == MsgType::ReceiverCfgChgRequest) {
+				// Receiver config is handled locally; never forwarded to the locator.
 				RocketPersistentSettings &receiver_settings = archive_.GetReceiverSettings();
 				receiver_settings.lora_channel = current_msg_.payload[0];
 //				for (uint8_t i = 0; i < device_name_length; i++)
@@ -285,10 +321,12 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 				archive_.SaveReceiverSettings(receiver_settings);
 				SetChannel(receiver_settings.lora_channel);
 			} else {
+				// All other payloaded messages: validate CRC and queue for timed forwarding.
 				if (ValidateCRC(reinterpret_cast<const uint8_t*>(&current_msg_),
 						sizeof(PacketHeader) + message_length_)) {
-					radio_->Send(reinterpret_cast<const uint8_t*>(&current_msg_),
-							sizeof(PacketHeader) + message_length_);
+					pending_tx_.msg   = current_msg_;
+					pending_tx_.len   = message_length_;
+					pending_tx_.ready = true;
 				}
 			}
 			Reset();

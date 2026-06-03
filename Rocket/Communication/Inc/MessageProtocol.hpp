@@ -7,8 +7,9 @@
 
 namespace Communication {
 
-// Max total bytes for one packet (header + fields + payload)
-constexpr size_t kMaxPayloadBytes = 256;
+// Max total bytes for one LoRa packet.  The radio's payload-length register
+// is 8 bits, so the hard limit is 255.
+constexpr size_t kMaxPayloadBytes = 255;
 constexpr uint8_t system_id = 0x44;
 constexpr uint16_t kCrc16Poly = 0xA001;   // CRC‑16/IBM reflected polynomial
 constexpr uint16_t kCrc16Key = 0xFFFF;   // standard initial value

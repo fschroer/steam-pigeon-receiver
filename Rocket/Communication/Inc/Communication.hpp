@@ -65,6 +65,11 @@ template<> struct MsgTraits<MsgType::FlightData> {
     static constexpr auto field = &ParsedMessage::flight_data_packet;
 };
 
+template<> struct MsgTraits<MsgType::FlightDataParity> {
+    using type = FlightDataPacket;
+    static constexpr auto field = &ParsedMessage::flight_data_packet;
+};
+
 template<MsgType M>
 ParseResult decode_message(const uint8_t* data, std::size_t len, ParsedMessage& out)
 {
@@ -98,6 +103,9 @@ public:
 	void ForwardToBluetooth(const uint8_t* buf, std::size_t len);
 	void UpdateStatusLeds();
 	void OnUART1Char(uint8_t uart_char);
+	// Call from the main loop: sends any pending outbound LoRa message once
+	// the timing window is safe (not near the next expected PreLaunchData TX).
+	void ServicePendingTx();
 
 private:
 	DeviceUID& deviceUID_;
@@ -113,6 +121,32 @@ private:
 	bool radio_tx_led_status_serviced_ = true;
 	uint32_t last_radio_rx_end_ms_ = 0;
 	bool radio_rx_led_status_serviced_ = true;
+	// Timestamp of the last received PreLaunchData packet.  Used by
+	// ServicePendingTx() to avoid forwarding app messages while the locator
+	// is likely mid-TX on its next periodic PreLaunchData transmission.
+	uint32_t last_prelaunch_rx_ms_    = 0;
+	bool     prelaunch_ever_received_ = false;
+
+	// Danger window around the expected next PreLaunchData TX.
+	// PreLaunchData is sent at ~1 s intervals; we hold outbound LoRa TX
+	// in [750 ms, 1250 ms) to avoid collision, then release.
+	static constexpr uint32_t kPrelaunchDangerStartMs = 750u;
+	static constexpr uint32_t kPrelaunchDangerEndMs   = 1250u;
+
+	// Set when the first FlightData packet is received from the locator.
+	// At that point the locator is in DataRequested state and will never send
+	// PreLaunchData again this session, so the timing gate is unnecessary.
+	bool in_flight_data_mode_ = false;
+
+	// Single-slot outbound queue: one validated message waiting for a safe
+	// TX window.  Overwritten if a second message arrives before the first
+	// is sent (acceptable — ACKs are cumulative, requests are idempotent).
+	struct PendingTx {
+		AppMessage msg {};
+		uint8_t    len  = 0;
+		bool       ready = false;
+	};
+	PendingTx pending_tx_;
 	uint32_t last_bt_tx_end_ms_ = 0;
 	bool bt_tx_led_status_serviced_ = true;
 	uint32_t last_bt_rx_end_ms_ = 0;

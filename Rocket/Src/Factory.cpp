@@ -33,6 +33,7 @@ void Factory::Init(const Radio_s *radio) {
 
 void Factory::Service() {
 	comm_.UpdateStatusLeds();
+	comm_.ServicePendingTx();
 }
 
 void Factory::OnRadioTxDone() {
