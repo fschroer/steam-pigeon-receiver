@@ -78,7 +78,7 @@ void Communication::OnRadioTxDone() {
 }
 
 void Communication::OnRadioRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraSnr_FskCfo) {
-	RgbLed(RgbColor::Green, LedState::On);
+//	RgbLed(RgbColor::Green, LedState::On);
 	last_radio_rx_end_ms_ = HAL_GetTick();
 	radio_rx_led_status_serviced_ = false;
 	std::memcpy(rx_payload_, payload, size);
@@ -99,32 +99,42 @@ void Communication::ProcessRadioRx() {
 			// Copy the original message
 			std::memcpy(&ext.base, &parsed.prelaunch, sizeof(PreLaunchData));
 			// Append receiver metadata
-			ext.receiver_lora_channel = archive_.GetReceiverSettings().lora_channel;
-			;
+			const RocketPersistentSettings& recv_settings = archive_.GetReceiverSettings();
+			ext.receiver_lora_channel = recv_settings.lora_channel;
+			std::memcpy(ext.receiver_name, recv_settings.device_name, device_name_length);
 			power_.enableDivider();
 			HAL_Delay(50);
 			ext.receiver_battery_level = power_.readBatteryMillivolts();
+			ext.rssi = rssi_;
 			// Recompute CRC over the extended struct
 			ext.base.packet_header.crc = ComputeSendMessageCrc(ext);
 			ForwardToBluetooth(reinterpret_cast<const uint8_t*>(&ext), sizeof(ext));
 			break;
 		}
+		case MsgType::TelemetryData: {
+			TelemetryMessageExtended ext { };
+			std::memcpy(&ext.base, &parsed.telemetry, sizeof(TelemetryData));
+			ext.rssi = rssi_;
+			ext.base.packet_header.crc = ComputeSendMessageCrc(ext);
+			ForwardToBluetooth(reinterpret_cast<const uint8_t*>(&ext), sizeof(ext));
+			break;
+		}
 		default: {
-			// FlightData / FlightDataParity — locator is in DataRequested;
-			// suppress the PreLaunchData timing gate for outbound messages.
-			if (parsed.type == MsgType::FlightData || parsed.type == MsgType::FlightDataParity)
-				in_flight_data_mode_ = true;
+			if (parsed.type == MsgType::FlightData || parsed.type == MsgType::FlightDataParity) {
+				// Locator is in DataRequested — record burst timing and arm deferred-ACK.
+				in_flight_data_mode_    = true;
+				last_flight_data_rx_ms_ = HAL_GetTick();
+			}
 			ForwardToBluetooth(rx_payload_, rx_message_size_);
 			break;
 		}
 		}
 		RgbLed(RgbColor::Green, LedState::On);
-		last_radio_rx_end_ms_ = HAL_GetTick();
-		radio_rx_led_status_serviced_ = false;
 	} else {
 		RgbLed(RgbColor::Red, LedState::On);
-		return;
 	}
+	last_radio_rx_end_ms_ = HAL_GetTick();
+	radio_rx_led_status_serviced_ = false;
 }
 
 void Communication::ForwardToBluetooth(const uint8_t *buf, std::size_t len) {
@@ -209,18 +219,76 @@ void Communication::ServicePendingTx() {
 	if (!pending_tx_.ready)
 		return;
 
-	// Only apply the PreLaunchData collision-avoidance window when the locator
-	// is still sending PreLaunchData.  Once FlightData packets are flowing the
-	// locator is in DataRequested and no more PreLaunchData will come.
-	if (!in_flight_data_mode_ && prelaunch_ever_received_) {
+	if (in_flight_data_mode_ &&
+			pending_tx_.msg.header.msg_type == MsgType::FlightDataAck) {
+		// Deferred-ACK strategy: hold the ACK until the locator's burst has
+		// ended (no FlightData packet received for kAckDeferMs).  This ensures
+		// the locator's radio is in RX — not mid-TX on the next burst packet —
+		// when the ACK arrives, preventing the half-duplex collision that
+		// caused the transfer to stall after the first packet.
+		if (HAL_GetTick() - last_flight_data_rx_ms_ < kAckDeferMs)
+			return;
+	} else if (!in_flight_data_mode_ && prelaunch_ever_received_) {
+		// PreLaunchData collision-avoidance: hold non-ACK messages (e.g.
+		// FlightMetadataRequest) away from the predicted PreLaunchData TX window.
 		const uint32_t elapsed = HAL_GetTick() - last_prelaunch_rx_ms_;
 		if (elapsed >= kPrelaunchDangerStartMs && elapsed < kPrelaunchDangerEndMs)
-			return;  // hold until past the expected PreLaunchData TX window
+			return;
 	}
 
 	radio_->Send(reinterpret_cast<const uint8_t*>(&pending_tx_.msg),
 			sizeof(PacketHeader) + pending_tx_.len);
 	pending_tx_.ready = false;
+}
+
+void Communication::QueueBleNameUpdate(const char* name) {
+	if (name != nullptr && name[0] != 0) {
+		std::memcpy(pending_ble_name_, name, device_name_length);
+		ble_name_update_pending_ = true;
+	}
+}
+
+void Communication::ServiceBleNameUpdate() {
+	if (!ble_name_update_pending_) return;
+	ble_name_update_pending_ = false;
+
+	// Build: AT+LENA<name>\r\n
+	char cmd[sizeof(change_ble_name_) - 1 + device_name_length + 2] = { 0 };
+	std::memcpy(cmd, change_ble_name_, sizeof(change_ble_name_) - 1);
+	uint8_t i = 0;
+	for (; i < device_name_length; i++) {
+		if (pending_ble_name_[i] == 0) break;
+		cmd[sizeof(change_ble_name_) - 1 + i] = pending_ble_name_[i];
+	}
+	cmd[sizeof(change_ble_name_) - 1 + i++] = '\r';
+	cmd[sizeof(change_ble_name_) - 1 + i++] = '\n';
+
+	// Enter command mode, update name, reset module.
+	// The BLE reset drops the active connection; the app reconnects by MAC address.
+	HAL_UART_Transmit(&huart1_, (uint8_t*) command_mode_, sizeof(command_mode_) - 1, 100);
+	HAL_Delay(100);
+	HAL_UART_Transmit(&huart1_, (uint8_t*) cmd, sizeof(change_ble_name_) - 1 + i, 100);
+	HAL_Delay(100);
+	HAL_UART_Transmit(&huart1_, (uint8_t*) reset_, sizeof(reset_) - 1, 100);
+	HAL_Delay(100);
+}
+
+void Communication::ServiceReceiverInfoResponse() {
+	if (!receiver_info_response_pending_) return;
+	receiver_info_response_pending_ = false;
+
+	ReceiverInfoMessage msg { };
+	msg.header.system_id = system_id;
+	msg.header.msg_type  = MsgType::ReceiverInfo;
+	msg.header.msg_count = 0;
+	msg.header.crc       = 0;
+
+	const RocketPersistentSettings& settings = archive_.GetReceiverSettings();
+	msg.lora_channel = settings.lora_channel;
+	std::memcpy(msg.device_name, settings.device_name, device_name_length);
+
+	msg.header.crc = ComputeMessageCrc(msg);
+	ForwardToBluetooth(reinterpret_cast<const uint8_t*>(&msg), sizeof(msg));
 }
 
 void Communication::OnUART1Char(uint8_t uart_char) {
@@ -270,6 +338,9 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 		case MsgType::DeploymentTestRequest:
 			message_length_ = 1;
 			break;
+		case MsgType::ReceiverInfoRequest:
+			message_length_ = 0;
+			break;
 		}
 		if (message_length_ > 64) { // Safety check
 			Reset();
@@ -296,12 +367,17 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 	case ParseState::CRC2:
 		current_msg_.header.crc = (current_msg_.header.crc & 0xff) | ((uint16_t) uart_char << 8);
 		if (cursor_ >= message_length_) {
-			// Zero-payload message (e.g. ArmRequest, DisarmRequest).
-			// Validate CRC and queue for timed forwarding to the locator.
 			if (ValidateCRC(reinterpret_cast<const uint8_t*>(&current_msg_), sizeof(PacketHeader) + message_length_)) {
-				pending_tx_.msg   = current_msg_;
-				pending_tx_.len   = message_length_;
-				pending_tx_.ready = true;
+				if (current_msg_.header.msg_type == MsgType::ReceiverInfoRequest) {
+					// Handled locally — queue a BLE response, never forward to locator.
+					receiver_info_response_pending_ = true;
+				} else {
+					// Zero-payload message (e.g. ArmRequest, DisarmRequest): queue for
+					// timed forwarding to the locator.
+					pending_tx_.msg   = current_msg_;
+					pending_tx_.len   = message_length_;
+					pending_tx_.ready = true;
+				}
 			}
 			Reset();
 		} else {
@@ -316,10 +392,12 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 				// Receiver config is handled locally; never forwarded to the locator.
 				RocketPersistentSettings &receiver_settings = archive_.GetReceiverSettings();
 				receiver_settings.lora_channel = current_msg_.payload[0];
-//				for (uint8_t i = 0; i < device_name_length; i++)
-//					receiver_settings.device_name[i] = device_name_[i];
+				for (uint8_t i = 0; i < device_name_length; i++)
+					receiver_settings.device_name[i] = current_msg_.payload[1 + i];
 				archive_.SaveReceiverSettings(receiver_settings);
 				SetChannel(receiver_settings.lora_channel);
+				// Queue BLE name update for execution in the main loop (safe from ISR).
+				QueueBleNameUpdate(receiver_settings.device_name);
 			} else {
 				// All other payloaded messages: validate CRC and queue for timed forwarding.
 				if (ValidateCRC(reinterpret_cast<const uint8_t*>(&current_msg_),

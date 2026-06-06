@@ -39,6 +39,7 @@ void UserInteraction::ProcessChar(uint8_t uart_char, DeviceState &device_state) 
 					user_interaction_state_ = UserInteractionState::ConfigHome;
 					lora_channel_ = receiver_settings.lora_channel;
 					std::memcpy(device_name_, receiver_settings.device_name, device_name_length);
+					device_name_[device_name_length] = 0; // null-terminate local buffer
 					DisplayConfigSettingsMenu();
 				} else if (std::memcmp(user_input_, dfu_command_, char_pos) == 0) {
 					device_state = DeviceState::Config;
@@ -61,6 +62,7 @@ void UserInteraction::ProcessChar(uint8_t uart_char, DeviceState &device_state) 
 			std::memcpy(receiver_settings.device_name, device_name_, device_name_length);
 			archive_.SaveReceiverSettings(receiver_settings);
 			comm_.SetChannel(lora_channel_);
+			comm_.QueueBleNameUpdate(device_name_);
 			device_state = DeviceState::Receive;
 			user_interaction_state_ = UserInteractionState::WaitingForCommand;
 			export_line.WriteMany(config_save_text_);
@@ -141,16 +143,19 @@ void UserInteraction::AdjustConfigTextSetting(uint8_t uart_char, char *config_mo
 				config_mode_setting[i] = user_input_[i];
 			for (; i < device_name_length; i++)
 				config_mode_setting[i] = 0;
+			// Null-terminate the local buffer (beyond the on-wire field) so the
+			// name is safe to use as a C string (e.g. for BLE AT commands, display).
+			config_mode_setting[device_name_length] = 0;
 		}
 		char_pos = 0;
-		for (uint8_t i = 0; i < device_name_length; i++)
+		for (uint8_t i = 0; i < device_name_buffer_size; i++)
 			user_input_[i] = 0;
 		user_interaction_state_ = UserInteractionState::ConfigHome;
 		DisplayConfigSettingsMenu();
 	} else if (uart_char == 8 && char_pos > 0) {
 		HAL_UART_Transmit(&huart2_, (uint8_t*) bs_, 3, uart_timeout);
 		user_input_[--char_pos] = 0;
-	} else if (uart_char >= ' ' && uart_char <= '~' && char_pos < device_name_length - 1) {
+	} else if (uart_char >= ' ' && uart_char <= '~' && char_pos < device_name_length) {
 		HAL_UART_Transmit(&huart2_, &uart_char, 1, uart_timeout);
 		user_input_[char_pos++] = uart_char;
 	}

@@ -34,7 +34,7 @@ private:
 
 	UserInteractionState user_interaction_state_ = WaitingForCommand;
 	char *uart_line_ = new char[UART_LINE_MAX_LENGTH + 1];
-	char *user_input_ = new char[USER_INPUT_MAX_LENGTH + 1];
+	char *user_input_ = new char[device_name_buffer_size];
 	const char *clear_screen_ = "\x1b[2J\r\0";
 	const char *config_command_ = "config\0";
 	const char *dfu_command_ = "dfu\0";
@@ -56,7 +56,7 @@ private:
 	const char *dfu_warning_text_ = "Warning - device will stop working until reset by administrator\r\n\0";
 
 	uint32_t lora_channel_;
-	char device_name_[device_name_length];
+	char device_name_[device_name_buffer_size]; // local copy; [device_name_length] is always 0
 
 	void DisplayConfigSettingsMenu();
 	void AdjustConfigNumericSetting(uint8_t uart_char, uint32_t *config_mode_setting, uint32_t max_setting_value, bool tenths);

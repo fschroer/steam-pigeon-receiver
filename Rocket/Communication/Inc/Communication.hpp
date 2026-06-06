@@ -106,6 +106,9 @@ public:
 	// Call from the main loop: sends any pending outbound LoRa message once
 	// the timing window is safe (not near the next expected PreLaunchData TX).
 	void ServicePendingTx();
+	void ServiceBleNameUpdate();
+	void QueueBleNameUpdate(const char* name);
+	void ServiceReceiverInfoResponse();
 
 private:
 	DeviceUID& deviceUID_;
@@ -135,8 +138,17 @@ private:
 
 	// Set when the first FlightData packet is received from the locator.
 	// At that point the locator is in DataRequested state and will never send
-	// PreLaunchData again this session, so the timing gate is unnecessary.
-	bool in_flight_data_mode_ = false;
+	// PreLaunchData again this session, so the PreLaunchData timing gate is
+	// unnecessary and deferred-ACK logic takes over instead.
+	bool     in_flight_data_mode_     = false;
+	// Timestamp of the last received FlightData or FlightDataParity packet.
+	// Used to detect when the locator's burst has ended (no new packet for
+	// kAckDeferMs ms) so the cumulative ACK can be safely forwarded.
+	uint32_t last_flight_data_rx_ms_  = 0;
+	// How long to wait after the last burst packet before forwarding the ACK.
+	// Must exceed one inter-packet gap (data TX ~380 ms + loop delay ~50 ms)
+	// so we do not send the ACK while the next burst packet is still arriving.
+	static constexpr uint32_t kAckDeferMs = 600u;
 
 	// Single-slot outbound queue: one validated message waiting for a safe
 	// TX window.  Overwritten if a second message arrives before the first
@@ -313,6 +325,13 @@ private:
 
 	  return crc;
 	}
+
+    // Set in ISR (OnUART1Char), consumed in main-loop (ServiceBleNameUpdate /
+    // ServiceReceiverInfoResponse).  volatile prevents the compiler from caching
+    // these flags across the ISR/main-loop boundary.
+    volatile bool ble_name_update_pending_      = false;
+    volatile bool receiver_info_response_pending_ = false;
+    char pending_ble_name_[device_name_buffer_size] = { 0 };
 
     void Reset() {
         parse_state_ = ParseState::IDLE;

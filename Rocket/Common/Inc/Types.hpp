@@ -59,3 +59,13 @@ struct Vec3f {
     Vec3f& operator-=(const Vec3f& o) { x -= o.x; y -= o.y; z -= o.z; return *this; }
     Vec3f& operator*=(float s) { x *= s; y *= s; z *= s; return *this; }
 };
+
+struct Quaternionf {
+    float w;
+    float x;
+    float y;
+    float z;
+
+    Quaternionf() : w(1), x(0), y(0), z(0) {}
+    Quaternionf(float w_, float x_, float y_, float z_) : w(w_), x(x_), y(y_), z(z_) {}
+};

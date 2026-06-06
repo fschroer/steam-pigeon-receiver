@@ -31,7 +31,9 @@ enum class MsgType : uint8_t {
 	FlightDataParity = 11, // Parity packet to allow the app to reconstruct profile data if one packet is lost.
 	FlightDataAck = 12, // Profile data acknowledgement sent from the app via the receiver.
 	DeploymentTestRequest = 13, // Request from the app, via the receiver, for the locator to execute a deployment test.
-	DeploymentTest = 14 // Deployment test countdown sent from the locator to the app via the receiver.
+	DeploymentTest = 14,        // Deployment test countdown sent from the locator to the app via the receiver.
+	ReceiverInfoRequest = 15,   // Request from the app to the receiver for its current channel and name (no locator needed).
+	ReceiverInfo = 16           // Response from the receiver with its current LoRa channel and device name.
 };
 
 enum class ParseState {
@@ -90,6 +92,8 @@ struct PreLaunchMessageExtended {
 	PreLaunchData base;     // original message
 	uint8_t receiver_lora_channel;
 	uint16_t receiver_battery_level;
+	char receiver_name[device_name_length];
+	int16_t rssi;           // RSSI seen by receiver (dBm)
 };
 
 struct TelemetryData {
@@ -107,10 +111,14 @@ struct TelemetryData {
 	uint8_t deployment_ch4_stats;
 	uint8_t physical_deployment_stats;
 	float agl;
-	Vec3f accel;
-	Vec3f gyro;
-	float velocity;
+	Vec3f vel_ned_mps;    // fused NED velocity (north, east, down) m/s
+	Quaternionf q_bn;     // body-to-NED attitude quaternion (w, x, y, z)
 	FlightStates flight_state;
+};
+
+struct TelemetryMessageExtended {
+	TelemetryData base;     // original message
+	int16_t rssi;           // RSSI seen by receiver (dBm)
 };
 
 struct FlightMetadataRecord {
@@ -191,6 +199,15 @@ struct LocatorRocketSettings {
 struct ReceiverSettings {
 	PacketHeader header;
 	uint8_t lora_channel = 0;
+	char device_name[device_name_length] = { 0 };
+};
+
+// Receiver-only status message sent in response to ReceiverInfoRequest.
+// Never forwarded to the locator.
+struct ReceiverInfoMessage {
+	PacketHeader header;
+	uint8_t      lora_channel = 0;
+	char         device_name[device_name_length] = { 0 };
 };
 
 #pragma pack(pop)

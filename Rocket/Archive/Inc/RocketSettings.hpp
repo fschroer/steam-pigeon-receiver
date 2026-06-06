@@ -5,7 +5,14 @@
 #include <type_traits>
 #include <cstring>
 
+// On-wire / struct field size: holds exactly device_name_length printable characters.
+// A null terminator is NOT required in the protocol field; shorter names are zero-padded.
 constexpr std::size_t device_name_length = 20;
+
+// Local buffer size for C-string operations: one extra byte for a null terminator.
+// Use device_name_buffer_size for stack / member buffers; use device_name_length for
+// struct fields and wire-format copies.
+constexpr std::size_t device_name_buffer_size = device_name_length + 1;
 
 #pragma pack(push, 1)
 
