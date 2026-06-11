@@ -7,6 +7,7 @@ extern "C" {
 #include <cstring>
 #include <cstdint>
 #include "Communication.hpp"
+#include "version.h"
 #include "StRadioAdapter.hpp"
 #include "Format.hpp"
 #include "Units.hpp"
@@ -92,9 +93,9 @@ void Communication::ProcessRadioRx() {
 	if (ParseLoraFrame(rx_payload_, rx_message_size_, system_id, parsed) == ParseResult::Ok) {
 		switch (parsed.type) {
 		case MsgType::PreLaunchData: {
-			last_prelaunch_rx_ms_    = HAL_GetTick();
-			prelaunch_ever_received_ = true;
-			in_flight_data_mode_     = false;  // locator returned to Disarmed
+			last_locator_periodic_rx_ms_ = HAL_GetTick();
+			locator_periodic_ever_rx_    = true;
+			in_flight_data_mode_         = false;  // locator returned to Disarmed
 			PreLaunchMessageExtended ext { };
 			// Copy the original message
 			std::memcpy(&ext.base, &parsed.prelaunch, sizeof(PreLaunchData));
@@ -112,9 +113,22 @@ void Communication::ProcessRadioRx() {
 			break;
 		}
 		case MsgType::TelemetryData: {
+			last_locator_periodic_rx_ms_ = HAL_GetTick();
+			locator_periodic_ever_rx_    = true;
 			TelemetryMessageExtended ext { };
 			std::memcpy(&ext.base, &parsed.telemetry, sizeof(TelemetryData));
 			ext.rssi = rssi_;
+			ext.base.packet_header.crc = ComputeSendMessageCrc(ext);
+			ForwardToBluetooth(reinterpret_cast<const uint8_t*>(&ext), sizeof(ext));
+			break;
+		}
+		case MsgType::VersionInfo: {
+			// Locator responded with its firmware version.  Append the receiver's
+			// version and forward the extended message to the app via Bluetooth.
+			VersionInfoExtended ext { };
+			std::memcpy(&ext.base, &parsed.version_info, sizeof(VersionInfoMessage));
+			std::memcpy(ext.receiver_version, GIT_VERSION,
+					std::min(sizeof(ext.receiver_version), sizeof(GIT_VERSION)));
 			ext.base.packet_header.crc = ComputeSendMessageCrc(ext);
 			ForwardToBluetooth(reinterpret_cast<const uint8_t*>(&ext), sizeof(ext));
 			break;
@@ -131,7 +145,11 @@ void Communication::ProcessRadioRx() {
 		}
 		RgbLed(RgbColor::Green, LedState::On);
 	} else {
-		RgbLed(RgbColor::Red, LedState::On);
+		// Suppress the red LED for a brief window after our own TX ends:
+		// the TX→RX radio transition can produce a spurious OnRxDone with
+		// a payload that fails our CRC, which is not a real receive error.
+		if (HAL_GetTick() - last_radio_tx_end_ms_ >= kPostTxRxGuardMs)
+			RgbLed(RgbColor::Red, LedState::On);
 	}
 	last_radio_rx_end_ms_ = HAL_GetTick();
 	radio_rx_led_status_serviced_ = false;
@@ -198,6 +216,9 @@ ParseResult Communication::ParseLoraFrame(const uint8_t *data, std::size_t len, 
 	case MsgType::DeploymentTest:
 		return decode_message<MsgType::DeploymentTest>(data, len, out);
 
+	case MsgType::VersionInfo:
+		return decode_message<MsgType::VersionInfo>(data, len, out);
+
 	case MsgType::FlightMetadata:
 		return decode_message<MsgType::FlightMetadata>(data, len, out);
 
@@ -228,11 +249,17 @@ void Communication::ServicePendingTx() {
 		// caused the transfer to stall after the first packet.
 		if (HAL_GetTick() - last_flight_data_rx_ms_ < kAckDeferMs)
 			return;
-	} else if (!in_flight_data_mode_ && prelaunch_ever_received_) {
-		// PreLaunchData collision-avoidance: hold non-ACK messages (e.g.
-		// FlightMetadataRequest) away from the predicted PreLaunchData TX window.
-		const uint32_t elapsed = HAL_GetTick() - last_prelaunch_rx_ms_;
-		if (elapsed >= kPrelaunchDangerStartMs && elapsed < kPrelaunchDangerEndMs)
+	} else if (!in_flight_data_mode_) {
+		// PreLaunchData collision-avoidance: only forward to the locator during
+		// the safe window [kPostPrelaunchMinMs, kPostPrelaunchMaxMs) after the
+		// last received PreLaunchData.  This ensures the locator's radio is in
+		// RX (not mid-TX on its ~1 s periodic PreLaunchData burst) when our
+		// message arrives.  If no PreLaunchData has been seen yet, block
+		// entirely — we have no timing reference and should not transmit blind.
+		if (!locator_periodic_ever_rx_)
+			return;
+		const uint32_t elapsed = HAL_GetTick() - last_locator_periodic_rx_ms_;
+		if (elapsed < kPostPrelaunchMinMs || elapsed >= kPostPrelaunchMaxMs)
 			return;
 	}
 
@@ -341,6 +368,9 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 		case MsgType::ReceiverInfoRequest:
 			message_length_ = 0;
 			break;
+		case MsgType::VersionRequest:
+			message_length_ = 0;
+			break;
 		}
 		if (message_length_ > 64) { // Safety check
 			Reset();
@@ -391,13 +421,22 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 			if (current_msg_.header.msg_type == MsgType::ReceiverCfgChgRequest) {
 				// Receiver config is handled locally; never forwarded to the locator.
 				RocketPersistentSettings &receiver_settings = archive_.GetReceiverSettings();
+				// Capture old name before overwriting so we can skip the BLE module reset
+				// when only the channel changed (reset drops the active BLE connection).
+				char old_name[device_name_length];
+				std::memcpy(old_name, receiver_settings.device_name, device_name_length);
 				receiver_settings.lora_channel = current_msg_.payload[0];
 				for (uint8_t i = 0; i < device_name_length; i++)
 					receiver_settings.device_name[i] = current_msg_.payload[1 + i];
 				archive_.SaveReceiverSettings(receiver_settings);
 				SetChannel(receiver_settings.lora_channel);
-				// Queue BLE name update for execution in the main loop (safe from ISR).
-				QueueBleNameUpdate(receiver_settings.device_name);
+				// Only reset the BLE module when the advertised name actually changed;
+				// the reset drops the active connection and delays channel confirmation.
+				if (std::memcmp(old_name, receiver_settings.device_name, device_name_length) != 0)
+					QueueBleNameUpdate(receiver_settings.device_name);
+				// Automatically send ReceiverInfo so the app gets confirmation without
+				// waiting for it to poll with a ReceiverInfoRequest.
+				receiver_info_response_pending_ = true;
 			} else {
 				// All other payloaded messages: validate CRC and queue for timed forwarding.
 				if (ValidateCRC(reinterpret_cast<const uint8_t*>(&current_msg_),

@@ -33,7 +33,9 @@ enum class MsgType : uint8_t {
 	DeploymentTestRequest = 13, // Request from the app, via the receiver, for the locator to execute a deployment test.
 	DeploymentTest = 14,        // Deployment test countdown sent from the locator to the app via the receiver.
 	ReceiverInfoRequest = 15,   // Request from the app to the receiver for its current channel and name (no locator needed).
-	ReceiverInfo = 16           // Response from the receiver with its current LoRa channel and device name.
+	ReceiverInfo = 16,          // Response from the receiver with its current LoRa channel and device name.
+	VersionRequest = 17,        // Request from the app, via the receiver, for both firmware versions.
+	VersionInfo = 18            // Response: locator version forwarded through receiver, which appends its own version.
 };
 
 enum class ParseState {
@@ -61,6 +63,16 @@ struct StartupMessage {
 	PacketHeader packet_header;
 	uint32_t serial_number;
 	uint8_t version[64];
+};
+
+struct VersionInfoMessage {
+	PacketHeader packet_header;
+	uint8_t locator_version[64];
+};
+
+struct VersionInfoExtended {
+	VersionInfoMessage base;        // locator version (original VersionInfo from locator)
+	uint8_t receiver_version[64];   // receiver appends its own version before forwarding to app
 };
 
 struct PreLaunchData {
@@ -165,6 +177,7 @@ struct ParsedMessage {
     	FlightMetadata flight_metadata;
     	FlightDataPacket flight_data_packet;
     	DeploymentTestCountdownMessage deployment_test;
+    	VersionInfoMessage version_info;
 //        PacketHeader packet_header;
     };
 };

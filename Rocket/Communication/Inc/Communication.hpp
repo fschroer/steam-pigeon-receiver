@@ -70,6 +70,11 @@ template<> struct MsgTraits<MsgType::FlightDataParity> {
     static constexpr auto field = &ParsedMessage::flight_data_packet;
 };
 
+template<> struct MsgTraits<MsgType::VersionInfo> {
+    using type = VersionInfoMessage;
+    static constexpr auto field = &ParsedMessage::version_info;
+};
+
 template<MsgType M>
 ParseResult decode_message(const uint8_t* data, std::size_t len, ParsedMessage& out)
 {
@@ -122,19 +127,33 @@ private:
 	uint32_t current_tick_ = 0;
 	uint32_t last_radio_tx_end_ms_ = 0;
 	bool radio_tx_led_status_serviced_ = true;
+
+	// How long after our own TX completes to ignore RX parse failures.
+	// The STM32WL TX→RX transition can produce a spurious OnRxDone with
+	// garbage payload that passes the hardware LoRa CRC but fails our
+	// application CRC.  Suppressing the red LED for this window avoids
+	// false error indications after every arm/disarm transmission.
+	static constexpr uint32_t kPostTxRxGuardMs = 100u;
 	uint32_t last_radio_rx_end_ms_ = 0;
 	bool radio_rx_led_status_serviced_ = true;
-	// Timestamp of the last received PreLaunchData packet.  Used by
-	// ServicePendingTx() to avoid forwarding app messages while the locator
-	// is likely mid-TX on its next periodic PreLaunchData transmission.
-	uint32_t last_prelaunch_rx_ms_    = 0;
-	bool     prelaunch_ever_received_ = false;
+	// Timestamp of the last received periodic locator packet (PreLaunchData or
+	// TelemetryData).  Both are sent at ~1 s intervals on rocket_service_count==2.
+	// Used by ServicePendingTx() to keep outbound TX in the safe window between
+	// locator transmissions.
+	uint32_t last_locator_periodic_rx_ms_ = 0;
+	bool     locator_periodic_ever_rx_    = false;
 
-	// Danger window around the expected next PreLaunchData TX.
-	// PreLaunchData is sent at ~1 s intervals; we hold outbound LoRa TX
-	// in [750 ms, 1250 ms) to avoid collision, then release.
-	static constexpr uint32_t kPrelaunchDangerStartMs = 750u;
-	static constexpr uint32_t kPrelaunchDangerEndMs   = 1250u;
+	// Safe TX window relative to last received periodic locator packet.
+	// PreLaunchData is sent at ~1 s intervals; the locator's radio transitions
+	// to RX immediately after its TX completes, which is ~0 ms before the
+	// receiver sees the packet end (airtime is symmetric).  We open the window
+	// kPostPrelaunchMinMs after receipt to let the locator radio fully settle
+	// into RX, and close it at kPostPrelaunchMaxMs to keep a safe margin before
+	// the next expected locator TX (~1000 ms after receipt, minus one airtime
+	// ~80 ms = ~920 ms).  If the arm/disarm command arrives outside this window
+	// it waits for the next PreLaunchData cycle rather than risking a collision.
+	static constexpr uint32_t kPostPrelaunchMinMs = 50u;
+	static constexpr uint32_t kPostPrelaunchMaxMs = 700u;
 
 	// Set when the first FlightData packet is received from the locator.
 	// At that point the locator is in DataRequested state and will never send
