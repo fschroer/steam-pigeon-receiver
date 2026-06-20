@@ -95,7 +95,7 @@ void Communication::ProcessRadioRx() {
 		case MsgType::PreLaunchData: {
 			last_locator_periodic_rx_ms_ = HAL_GetTick();
 			locator_periodic_ever_rx_    = true;
-			in_flight_data_mode_         = false;  // locator returned to Disarmed
+			locator_in_profile_mode_         = false;  // locator returned to Disarmed
 			PreLaunchMessageExtended ext { };
 			// Copy the original message
 			std::memcpy(&ext.base, &parsed.prelaunch, sizeof(PreLaunchData));
@@ -136,8 +136,16 @@ void Communication::ProcessRadioRx() {
 		default: {
 			if (parsed.type == MsgType::FlightData || parsed.type == MsgType::FlightDataParity) {
 				// Locator is in DataRequested — record burst timing and arm deferred-ACK.
-				in_flight_data_mode_    = true;
+				locator_in_profile_mode_    = true;
 				last_flight_data_rx_ms_ = HAL_GetTick();
+			} else if (parsed.type == MsgType::FlightMetadata) {
+				// Locator is in flight-profile mode (MetadataRequested): it has
+				// gone quiet and is listening, NOT running its ~1 s PreLaunchData
+				// TX cycle.  Mark it so app→locator commands (notably the
+				// FlightDataRequest) forward immediately instead of waiting for a
+				// PreLaunchData window that never opens while the locator is quiet
+				// — that wait was the ~24 s first-tap delay.
+				locator_in_profile_mode_ = true;
 			}
 			ForwardToBluetooth(rx_payload_, rx_message_size_);
 			break;
@@ -240,7 +248,7 @@ void Communication::ServicePendingTx() {
 	if (!pending_tx_.ready)
 		return;
 
-	if (in_flight_data_mode_ &&
+	if (locator_in_profile_mode_ &&
 			pending_tx_.msg.header.msg_type == MsgType::FlightDataAck) {
 		// Deferred-ACK strategy: hold the ACK until the locator's burst has
 		// ended (no FlightData packet received for kAckDeferMs).  This ensures
@@ -249,7 +257,7 @@ void Communication::ServicePendingTx() {
 		// caused the transfer to stall after the first packet.
 		if (HAL_GetTick() - last_flight_data_rx_ms_ < kAckDeferMs)
 			return;
-	} else if (!in_flight_data_mode_) {
+	} else if (!locator_in_profile_mode_) {
 		// PreLaunchData collision-avoidance: only forward to the locator during
 		// the safe window [kPostPrelaunchMinMs, kPostPrelaunchMaxMs) after the
 		// last received PreLaunchData.  This ensures the locator's radio is in

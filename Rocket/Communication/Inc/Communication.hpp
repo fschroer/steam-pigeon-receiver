@@ -155,11 +155,13 @@ private:
 	static constexpr uint32_t kPostPrelaunchMinMs = 50u;
 	static constexpr uint32_t kPostPrelaunchMaxMs = 700u;
 
-	// Set when the first FlightData packet is received from the locator.
-	// At that point the locator is in DataRequested state and will never send
-	// PreLaunchData again this session, so the PreLaunchData timing gate is
-	// unnecessary and deferred-ACK logic takes over instead.
-	bool     in_flight_data_mode_     = false;
+	// Set when the locator is in flight-profile mode — i.e. a FlightMetadata
+	// response or a FlightData/FlightDataParity packet has been received.  In
+	// that state the locator has gone quiet (listening, not running its periodic
+	// PreLaunchData TX), so the PreLaunchData timing gate is unnecessary:
+	// app→locator commands forward immediately, and deferred-ACK logic governs
+	// FlightDataAck.  Cleared when PreLaunchData resumes (locator back to Disarmed).
+	bool     locator_in_profile_mode_ = false;
 	// Timestamp of the last received FlightData or FlightDataParity packet.
 	// Used to detect when the locator's burst has ended (no new packet for
 	// kAckDeferMs ms) so the cumulative ACK can be safely forwarded.
