@@ -274,6 +274,23 @@ void Communication::ServicePendingTx() {
 	radio_->Send(reinterpret_cast<const uint8_t*>(&pending_tx_.msg),
 			sizeof(PacketHeader) + pending_tx_.len);
 	pending_tx_.ready = false;
+
+	// A LocatorCfgChgRequest may carry a new LoRa channel.  The locator (still on
+	// the old channel) has just received the forward above; now follow it onto the
+	// new channel so the link is preserved.  Doing this after the forward TX — not
+	// in the BLE parse path — avoids switching away before the command is sent.
+	if (pending_tx_.msg.header.msg_type == MsgType::LocatorCfgChgRequest) {
+		// payload holds the raw LocatorRocketSettings body (after the header).
+		constexpr size_t kChanOffset =
+				offsetof(LocatorRocketSettings, lora_channel) - sizeof(PacketHeader);
+		uint8_t new_channel = pending_tx_.msg.payload[kChanOffset];
+		RocketPersistentSettings &receiver_settings = archive_.GetReceiverSettings();
+		if (new_channel != receiver_settings.lora_channel) {
+			receiver_settings.lora_channel = new_channel;
+			archive_.SaveReceiverSettings(receiver_settings);
+			SetChannel(new_channel);
+		}
+	}
 }
 
 void Communication::QueueBleNameUpdate(const char* name) {
