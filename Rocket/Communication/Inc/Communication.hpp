@@ -155,6 +155,16 @@ private:
 	static constexpr uint32_t kPostPrelaunchMinMs = 50u;
 	static constexpr uint32_t kPostPrelaunchMaxMs = 700u;
 
+	// Deferred receiver channel switch after forwarding a locator channel change.
+	// radio_->Send() only *starts* the forward; changing the RF frequency before
+	// the transmit completes (OnRadioTxDone) would corrupt the very packet the
+	// locator must receive to switch.  So we arm the switch when the forward is
+	// sent and apply it from ServicePendingTx() once the forward TX has completed
+	// (last_radio_tx_end_ms_ advances past the arm time) and the radio has settled.
+	bool     pending_locator_channel_switch_ = false;
+	uint8_t  pending_locator_channel_ = 0;
+	uint32_t locator_channel_switch_armed_ms_ = 0;
+
 	// Set when the locator is in flight-profile mode — i.e. a FlightMetadata
 	// response or a FlightData/FlightDataParity packet has been received.  In
 	// that state the locator has gone quiet (listening, not running its periodic

@@ -245,6 +245,23 @@ ParseResult Communication::ParseLoraFrame(const uint8_t *data, std::size_t len, 
 }
 
 void Communication::ServicePendingTx() {
+	// Apply a deferred receiver channel switch once the forwarded locator config
+	// change has finished transmitting.  Done here (main loop), not right after
+	// radio_->Send(), so we never change RF frequency mid-transmit and corrupt the
+	// packet the locator needs.  Waits for a TxDone recorded after we armed, plus
+	// the standard post-TX settle guard.
+	if (pending_locator_channel_switch_ &&
+			(int32_t)(last_radio_tx_end_ms_ - locator_channel_switch_armed_ms_) >= 0 &&
+			HAL_GetTick() - last_radio_tx_end_ms_ >= kPostTxRxGuardMs) {
+		pending_locator_channel_switch_ = false;
+		RocketPersistentSettings &receiver_settings = archive_.GetReceiverSettings();
+		if (pending_locator_channel_ != receiver_settings.lora_channel) {
+			receiver_settings.lora_channel = pending_locator_channel_;
+			archive_.SaveReceiverSettings(receiver_settings);
+			SetChannel(pending_locator_channel_);
+		}
+	}
+
 	if (!pending_tx_.ready)
 		return;
 
@@ -271,25 +288,28 @@ void Communication::ServicePendingTx() {
 			return;
 	}
 
-	radio_->Send(reinterpret_cast<const uint8_t*>(&pending_tx_.msg),
-			sizeof(PacketHeader) + pending_tx_.len);
-	pending_tx_.ready = false;
-
-	// A LocatorCfgChgRequest may carry a new LoRa channel.  The locator (still on
-	// the old channel) has just received the forward above; now follow it onto the
-	// new channel so the link is preserved.  Doing this after the forward TX — not
-	// in the BLE parse path — avoids switching away before the command is sent.
+	// A LocatorCfgChgRequest may carry a new LoRa channel.  Capture it *before* the
+	// send so we can arm a deferred switch: the receiver must follow the locator
+	// onto the new channel, but only after this forward has fully transmitted (see
+	// the deferred-apply block at the top of this function).
+	bool arm_channel_switch = false;
+	uint8_t forwarded_channel = 0;
 	if (pending_tx_.msg.header.msg_type == MsgType::LocatorCfgChgRequest) {
 		// payload holds the raw LocatorRocketSettings body (after the header).
 		constexpr size_t kChanOffset =
 				offsetof(LocatorRocketSettings, lora_channel) - sizeof(PacketHeader);
-		uint8_t new_channel = pending_tx_.msg.payload[kChanOffset];
-		RocketPersistentSettings &receiver_settings = archive_.GetReceiverSettings();
-		if (new_channel != receiver_settings.lora_channel) {
-			receiver_settings.lora_channel = new_channel;
-			archive_.SaveReceiverSettings(receiver_settings);
-			SetChannel(new_channel);
-		}
+		forwarded_channel = pending_tx_.msg.payload[kChanOffset];
+		arm_channel_switch = (forwarded_channel != archive_.GetReceiverSettings().lora_channel);
+	}
+
+	radio_->Send(reinterpret_cast<const uint8_t*>(&pending_tx_.msg),
+			sizeof(PacketHeader) + pending_tx_.len);
+	pending_tx_.ready = false;
+
+	if (arm_channel_switch) {
+		pending_locator_channel_ = forwarded_channel;
+		locator_channel_switch_armed_ms_ = HAL_GetTick();
+		pending_locator_channel_switch_ = true;
 	}
 }
 
