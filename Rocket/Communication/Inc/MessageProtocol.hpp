@@ -100,6 +100,8 @@ struct PreLaunchData {
 	uint16_t main_backup_deploy_altitude;
 	char device_name[device_name_length];
 	uint16_t battery_voltage_mvolt;
+	uint32_t locator_id;   // cleartext STM MPU UID; passes through untouched to the app
+	uint32_t auth_tag;     // password-seeded checksum; receiver never inspects it
 };
 
 struct PreLaunchMessageExtended {
