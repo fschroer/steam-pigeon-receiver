@@ -60,6 +60,11 @@ template<> struct MsgTraits<MsgType::FlightMetadata> {
     static constexpr auto field = &ParsedMessage::flight_metadata;
 };
 
+template<> struct MsgTraits<MsgType::FlightEvents> {
+    using type = FlightEventsMessage;
+    static constexpr auto field = &ParsedMessage::flight_events;
+};
+
 template<> struct MsgTraits<MsgType::FlightData> {
     using type = FlightDataPacket;
     static constexpr auto field = &ParsedMessage::flight_data_packet;

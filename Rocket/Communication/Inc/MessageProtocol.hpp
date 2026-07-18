@@ -35,8 +35,27 @@ enum class MsgType : uint8_t {
 	ReceiverInfoRequest = 15,   // Request from the app to the receiver for its current channel and name (no locator needed).
 	ReceiverInfo = 16,          // Response from the receiver with its current LoRa channel and device name.
 	VersionRequest = 17,        // Request from the app, via the receiver, for both firmware versions.
-	VersionInfo = 18            // Response: locator version forwarded through receiver, which appends its own version.
+	VersionInfo = 18,           // Response: locator version forwarded through receiver, which appends its own version.
+	FlightEvents = 19           // Per-record flight event summary sent alongside a FlightData transfer.
 };
+
+// Flight event summary indices — wire order of FlightEventsMessage::event_timestamp_ms.
+// Mirrors the locator's Communication::FlightEvent; keep the two in step.
+enum class FlightEvent : uint8_t {
+	Launch = 0,
+	Burnout,
+	Apogee,
+	Noseover,
+	DroguePrimaryDeploy,
+	DrogueBackupDeploy,
+	DrogueVelocityThreshold,
+	MainPrimaryDeploy,
+	MainBackupDeploy,
+	MainVelocityThreshold,
+	Landing,
+	Count
+};
+constexpr size_t kFlightEventCount = static_cast<size_t>(FlightEvent::Count);
 
 enum class ParseState {
 	IDLE, TYPE, COUNT1, COUNT2, CRC1, CRC2, DATA, VALIDATE
@@ -148,6 +167,23 @@ struct FlightMetadata {
 	FlightMetadataRecord record[record_count];
 };
 
+// Per-record flight event summary.  The receiver only length-validates and
+// forwards this; the app decodes it.  Layout must match the locator's
+// Communication::FlightEventsMessage exactly.
+struct FlightEventsMessage {
+	PacketHeader packet_header;
+	uint8_t  record;
+	uint8_t  reserved;
+	uint16_t present_mask;
+	uint32_t flight_timestamp_s;
+	uint32_t event_timestamp_ms[kFlightEventCount];
+	float    max_altitude_m;
+	uint8_t  deployment_ch_stats[4];
+};
+// Length-validated on receive, so a silent layout drift from the locator would
+// drop every FlightEvents frame.  Pin it (the locator asserts the same 66).
+static_assert(sizeof(FlightEventsMessage) == 66, "FlightEventsMessage size changed — sync locator + app");
+
 // On-wire packet for flight profile transfer
 struct FlightDataPacket {
 	PacketHeader packet_header;
@@ -179,6 +215,7 @@ struct ParsedMessage {
     	PreLaunchData prelaunch;
     	TelemetryData telemetry;
     	FlightMetadata flight_metadata;
+    	FlightEventsMessage flight_events;
     	FlightDataPacket flight_data_packet;
     	DeploymentTestCountdownMessage deployment_test;
     	VersionInfoMessage version_info;

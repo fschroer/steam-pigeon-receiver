@@ -138,8 +138,9 @@ void Communication::ProcessRadioRx() {
 				// Locator is in DataRequested — record burst timing and arm deferred-ACK.
 				locator_in_profile_mode_    = true;
 				last_flight_data_rx_ms_ = HAL_GetTick();
-			} else if (parsed.type == MsgType::FlightMetadata) {
-				// Locator is in flight-profile mode (MetadataRequested): it has
+			} else if (parsed.type == MsgType::FlightMetadata || parsed.type == MsgType::FlightEvents) {
+				// Locator is in flight-profile mode (MetadataRequested, or the
+				// event summary that precedes a data burst): it has
 				// gone quiet and is listening, NOT running its ~1 s PreLaunchData
 				// TX cycle.  Mark it so app→locator commands (notably the
 				// FlightDataRequest) forward immediately instead of waiting for a
@@ -229,6 +230,9 @@ ParseResult Communication::ParseLoraFrame(const uint8_t *data, std::size_t len, 
 
 	case MsgType::FlightMetadata:
 		return decode_message<MsgType::FlightMetadata>(data, len, out);
+
+	case MsgType::FlightEvents:
+		return decode_message<MsgType::FlightEvents>(data, len, out);
 
 	case MsgType::FlightData:
 	case MsgType::FlightDataParity:
