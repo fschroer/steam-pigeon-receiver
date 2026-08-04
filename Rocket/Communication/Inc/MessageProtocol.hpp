@@ -149,6 +149,8 @@ struct TelemetryData {
 	Vec3f vel_ned_mps;    // fused NED velocity (north, east, down) m/s
 	Quaternionf q_bn;     // body-to-NED attitude quaternion (w, x, y, z)
 	FlightStates flight_state;
+	uint32_t locator_id;   // cleartext STM MPU UID; passes through untouched to the app
+	uint32_t auth_tag;     // password-seeded checksum; receiver never inspects it
 };
 
 struct TelemetryMessageExtended {
@@ -183,6 +185,15 @@ struct FlightEventsMessage {
 // Length-validated on receive, so a silent layout drift from the locator would
 // drop every FlightEvents frame.  Pin it (the locator asserts the same 66).
 static_assert(sizeof(FlightEventsMessage) == 66, "FlightEventsMessage size changed — sync locator + app");
+
+// The two unsolicited broadcasts are length-validated on receive and mirrored
+// byte-for-byte into the extended structs forwarded to the app, so a drift from
+// the locator's copy silently drops every frame of the type that drifted — the
+// failure looks like "the locator went out of range", which is the last thing
+// anyone debugs. Pinned here as the third copy of the layout; the locator
+// asserts the same numbers and the app's WireLayoutTest asserts the payloads.
+static_assert(sizeof(PreLaunchData) == 115, "PreLaunchData size changed — sync locator + app");
+static_assert(sizeof(TelemetryData) ==  76, "TelemetryData size changed — sync locator + app");
 
 // On-wire packet for flight profile transfer
 struct FlightDataPacket {
