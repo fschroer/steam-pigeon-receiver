@@ -107,6 +107,8 @@ void Communication::ProcessRadioRx() {
 			HAL_Delay(50);
 			ext.receiver_battery_level = power_.readBatteryMillivolts();
 			ext.rssi = rssi_;
+			ext.snr = LoraSnr_FskCfo_;
+			ext.noise_floor = TakeNoiseFloor();
 			// Recompute CRC over the extended struct
 			ext.base.packet_header.crc = ComputeSendMessageCrc(ext);
 			ForwardToBluetooth(reinterpret_cast<const uint8_t*>(&ext), sizeof(ext));
@@ -118,6 +120,8 @@ void Communication::ProcessRadioRx() {
 			TelemetryMessageExtended ext { };
 			std::memcpy(&ext.base, &parsed.telemetry, sizeof(TelemetryData));
 			ext.rssi = rssi_;
+			ext.snr = LoraSnr_FskCfo_;
+			ext.noise_floor = TakeNoiseFloor();
 			ext.base.packet_header.crc = ComputeSendMessageCrc(ext);
 			ForwardToBluetooth(reinterpret_cast<const uint8_t*>(&ext), sizeof(ext));
 			break;
@@ -246,6 +250,43 @@ ParseResult Communication::ParseLoraFrame(const uint8_t *data, std::size_t len, 
 	default:
 		return ParseResult::UnknownType;
 	}
+}
+
+int16_t Communication::TakeNoiseFloor() {
+	const int16_t peak = noise_floor_peak_;
+	noise_floor_peak_ = kNoiseFloorUnknown;
+	return peak;
+}
+
+void Communication::ServiceNoiseFloor() {
+	if (radio_ == nullptr || radio_busy_)
+		return;
+	const uint32_t now = HAL_GetTick();
+	// Never read RSSI while our own transmit is still settling.
+	if (now - last_radio_tx_end_ms_ < kPostTxRxGuardMs)
+		return;
+	// Sample only inside the ADR-0009 safe window, for two reasons.  First, that
+	// is the interval in which the locator is known to be listening rather than
+	// transmitting, so we measure the channel and not the locator's own carrier —
+	// sampling outside it would report our own link as interference.  Second, the
+	// window opens just after an RxDone, and the SubGHz PHY re-arms Rx() on every
+	// event, so the radio is reliably in RX (Rssi() is meaningless in standby).
+	//
+	// In flight-profile mode the locator bursts on no fixed schedule, so no safe
+	// window exists and sampling stops.  That is also when the user is on the
+	// ground pulling data and has no use for it.
+	if (!locator_periodic_ever_rx_ || locator_in_profile_mode_)
+		return;
+	const uint32_t elapsed = now - last_locator_periodic_rx_ms_;
+	if (elapsed < kPostPrelaunchMinMs || elapsed >= kPostPrelaunchMaxMs)
+		return;
+	if (now - last_noise_sample_ms_ < kNoiseSampleIntervalMs)
+		return;
+	last_noise_sample_ms_ = now;
+
+	const int16_t rssi = radio_->Rssi();
+	if (noise_floor_peak_ == kNoiseFloorUnknown || rssi > noise_floor_peak_)
+		noise_floor_peak_ = rssi;
 }
 
 void Communication::ServicePendingTx() {

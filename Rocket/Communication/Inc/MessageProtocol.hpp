@@ -129,6 +129,10 @@ struct PreLaunchMessageExtended {
 	uint16_t receiver_battery_level;
 	char receiver_name[device_name_length];
 	int16_t rssi;           // RSSI seen by receiver (dBm)
+	// Link quality / interference (ADR-0019).  Receiver-appended, so both sit
+	// outside the authenticated region and auth_tag is unaffected.
+	int8_t  snr;            // LoRa SNR of this packet (dB); was measured and discarded before
+	int16_t noise_floor;    // peak idle-channel RSSI since the last report (dBm)
 };
 
 struct TelemetryData {
@@ -156,6 +160,9 @@ struct TelemetryData {
 struct TelemetryMessageExtended {
 	TelemetryData base;     // original message
 	int16_t rssi;           // RSSI seen by receiver (dBm)
+	// Link quality / interference (ADR-0019), as in PreLaunchMessageExtended.
+	int8_t  snr;            // LoRa SNR of this packet (dB)
+	int16_t noise_floor;    // peak idle-channel RSSI since the last report (dBm)
 };
 
 struct FlightMetadataRecord {
@@ -194,6 +201,15 @@ static_assert(sizeof(FlightEventsMessage) == 66, "FlightEventsMessage size chang
 // asserts the same numbers and the app's WireLayoutTest asserts the payloads.
 static_assert(sizeof(PreLaunchData) == 115, "PreLaunchData size changed — sync locator + app");
 static_assert(sizeof(TelemetryData) ==  76, "TelemetryData size changed — sync locator + app");
+
+// The extended structs are what actually reach the app, and the app parses them
+// by hand-computed byte offsets — but nothing pinned their size until ADR-0019.
+// These are receiver-only (the locator never sees them), so the app's
+// WireLayoutTest is the only counterpart: app payload = sizeof(struct) − header(6).
+static_assert(sizeof(PreLaunchMessageExtended) == 143,
+		"PreLaunchMessageExtended size changed — sync the app's PRELAUNCH_MESSAGE_PAYLOAD_SIZE (137)");
+static_assert(sizeof(TelemetryMessageExtended) ==  81,
+		"TelemetryMessageExtended size changed — sync the app's TELEMETRY_MESSAGE_PAYLOAD_SIZE (75)");
 
 // On-wire packet for flight profile transfer
 struct FlightDataPacket {

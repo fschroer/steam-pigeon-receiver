@@ -20,6 +20,10 @@ public:
         r_->SetChannel(freq);
     }
 
+    int16_t Rssi() override {
+        return r_->Rssi(MODEM_LORA);
+    }
+
 private:
     const Radio_s* r_;
 };

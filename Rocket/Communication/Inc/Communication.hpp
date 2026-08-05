@@ -100,6 +100,11 @@ public:
     virtual void Send(const uint8_t* data, size_t len) = 0;
     virtual void Rx(uint32_t timeout_ms) = 0;
     virtual void SetChannel(uint32_t freq) = 0;
+    // Instantaneous RSSI on the current channel.  Read while idle in RX this is
+    // the channel's occupancy — noise plus whatever else is transmitting —
+    // independent of whether we can decode any of it (ADR-0019).  No default
+    // implementation: a silent one would let the sampling path go untested.
+    virtual int16_t Rssi() = 0;
 };
 
 class Communication{
@@ -116,6 +121,9 @@ public:
 	// Call from the main loop: sends any pending outbound LoRa message once
 	// the timing window is safe (not near the next expected PreLaunchData TX).
 	void ServicePendingTx();
+	// Call from the main loop: takes an idle-channel RSSI sample when the timing
+	// is known safe, and accumulates the peak for the next broadcast (ADR-0019).
+	void ServiceNoiseFloor();
 	void ServiceBleNameUpdate();
 	void QueueBleNameUpdate(const char* name);
 	void ServiceReceiverInfoResponse();
@@ -159,6 +167,23 @@ private:
 	// it waits for the next PreLaunchData cycle rather than risking a collision.
 	static constexpr uint32_t kPostPrelaunchMinMs = 50u;
 	static constexpr uint32_t kPostPrelaunchMaxMs = 700u;
+
+	// Idle-channel noise floor (ADR-0019).  Sampled only inside the window above,
+	// which is precisely the interval in which the locator is known to be
+	// listening rather than transmitting — sampling outside it would measure the
+	// locator's own carrier and report our own link as interference.
+	//
+	// We keep the PEAK rather than a mean: interference is bursty, and a mean over
+	// a second buries the 50 ms burst that is actually destroying packets.
+	//
+	// The value published with broadcast N covers the window after broadcast N-1,
+	// so it lags by one ~1 s period.  Irrelevant at the timescale a user reacts on.
+	static constexpr int16_t  kNoiseFloorUnknown = INT16_MIN;  // no sample this interval
+	static constexpr uint32_t kNoiseSampleIntervalMs = 20u;
+	int16_t  noise_floor_peak_ = kNoiseFloorUnknown;
+	uint32_t last_noise_sample_ms_ = 0;
+	// Read the accumulated peak and start a fresh interval.
+	int16_t TakeNoiseFloor();
 
 	// Deferred receiver channel switch after forwarding a locator channel change.
 	// radio_->Send() only *starts* the forward; changing the RF frequency before
