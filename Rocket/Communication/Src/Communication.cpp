@@ -12,6 +12,8 @@ extern "C" {
 #include "Format.hpp"
 #include "Units.hpp"
 #include "RgbLed.hpp"
+#include "StaticStringWriter.hpp"
+#include "UserInteraction.hpp"   // UART_LINE_MAX_LENGTH
 
 namespace Communication {
 
@@ -310,6 +312,27 @@ void Communication::ServiceNoiseFloor() {
 		noise_floor_peak_ = rssi;
 }
 
+void Communication::SurveyTraceLine(const char* tag, int32_t a, int32_t b) {
+	StaticStringWriter<UART_LINE_MAX_LENGTH> line(&huart2_);
+	line.WriteMany("[survey] ", tag, " ", a, " ", b, "\r\n");
+}
+
+void Communication::SurveyTraceCoarseTable() {
+	// Eight channels per line, so the whole band is legible in eight lines and the
+	// blocking UART cost lands between phases rather than inside a dwell.
+	for (uint8_t base = 0; base < kSurveyChannelCount; base += 8) {
+		StaticStringWriter<UART_LINE_MAX_LENGTH> line(&huart2_);
+		line.Clear();
+		line.Buffer().AppendMany("[survey] c", static_cast<uint32_t>(base), ":");
+		for (uint8_t i = 0; i < 8 && (base + i) < kSurveyChannelCount; i++) {
+			line.Buffer().Append(' ');
+			line.Buffer().AppendPadded(static_cast<int32_t>(survey_level_[base + i]), 5);
+		}
+		line.Buffer().Append("\r\n");
+		line.Flush();
+	}
+}
+
 void Communication::BeginChannelSurvey() {
 	// Every path out of here must queue a response.  Returning silently leaves the
 	// app waiting on a reply that will never come, which is indistinguishable from
@@ -334,11 +357,13 @@ void Communication::BeginChannelSurvey() {
 	if (locator_armed_) {
 		survey_status_ = ChannelSurveyStatus::RefusedArmed;
 		survey_response_pending_ = true;
+		SurveyTraceLine("refused armed", 0, 0);
 		return;
 	}
 	if (locator_in_profile_mode_) {
 		survey_status_ = ChannelSurveyStatus::RefusedBusy;
 		survey_response_pending_ = true;
+		SurveyTraceLine("refused profile-mode", 0, 0);
 		return;
 	}
 
@@ -356,9 +381,12 @@ void Communication::BeginChannelSurvey() {
 	survey_channel_start_ms_ = HAL_GetTick();
 	survey_start_ms_ = survey_channel_start_ms_;
 	survey_last_sample_ms_ = survey_channel_start_ms_;
+	SurveyTraceLine("start home", static_cast<int32_t>(survey_home_channel_), 0);
 }
 
 void Communication::BeginSurveyConfirmPhase() {
+	SurveyTraceLine("coarse done ms", static_cast<int32_t>(HAL_GetTick() - survey_start_ms_), 0);
+	SurveyTraceCoarseTable();
 	// Shortlist the quietest coarse candidates.  Selection rather than a sort: we
 	// only need the few we might recommend, and this runs on the main loop.
 	bool taken[kSurveyChannelCount] = { };
@@ -388,6 +416,9 @@ void Communication::BeginSurveyConfirmPhase() {
 		FinishChannelSurvey();
 		return;
 	}
+	for (uint8_t i = 0; i < survey_confirm_count_; i++)
+		SurveyTraceLine("shortlist", static_cast<int32_t>(i),
+				static_cast<int32_t>(survey_confirm_channel_[i]));
 	survey_channel_ = survey_confirm_channel_[0];
 	SetChannel(survey_channel_);
 	survey_channel_start_ms_ = HAL_GetTick();
@@ -406,6 +437,9 @@ void Communication::FinishChannelSurvey() {
 	// current peak describes the wrong frequency.  Discard it.
 	noise_floor_peak_ = kNoiseFloorUnknown;
 	survey_response_pending_ = true;
+	SurveyTraceLine("done status/ms", static_cast<int32_t>(survey_status_),
+			static_cast<int32_t>(HAL_GetTick() - survey_start_ms_));
+	SurveyTraceLine("restored channel", static_cast<int32_t>(survey_home_channel_), 0);
 }
 
 void Communication::ServiceChannelSurvey() {
@@ -446,6 +480,8 @@ void Communication::ServiceChannelSurvey() {
 	// other way to learn a sweep died, and a silent receiver is the one failure it
 	// cannot tell apart from unsupported firmware.
 	if (now - survey_start_ms_ >= kSurveyDeadlineMs) {
+		SurveyTraceLine("DEADLINE phase/ch", static_cast<int32_t>(survey_phase_),
+				static_cast<int32_t>(survey_channel_));
 		survey_status_ = ChannelSurveyStatus::RefusedBusy;
 		FinishChannelSurvey();
 		return;
@@ -473,6 +509,8 @@ void Communication::ServiceChannelSurvey() {
 			return;
 		}
 	} else {
+		SurveyTraceLine("confirm ch/level", static_cast<int32_t>(survey_channel_),
+				static_cast<int32_t>(survey_level_[survey_channel_]));
 		if (++survey_confirm_index_ >= survey_confirm_count_) {
 			FinishChannelSurvey();
 			return;

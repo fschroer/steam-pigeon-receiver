@@ -257,6 +257,19 @@ private:
 	void BeginSurveyConfirmPhase();  // shortlists the quietest coarse candidates
 	void FinishChannelSurvey();      // restores channel + RX and queues the response
 
+	// USB-C console trace, so a misbehaving sweep can be diagnosed from the bench
+	// instead of by inference.  Emitted only at phase boundaries, never inside a
+	// dwell: a console line is ~3 ms of blocking UART at 115200, which would
+	// distort the very dwell timings the trace exists to explain.  The full coarse
+	// table is dumped after the coarse pass ends for the same reason.
+	//
+	// Always on during a survey.  A survey is a deliberate, ~7 s, user-initiated
+	// action, so there is no steady-state chatter to suppress, and needing to
+	// enable tracing first is exactly the friction that makes a bench session cost
+	// an extra round trip.
+	void SurveyTraceLine(const char* tag, int32_t a, int32_t b);
+	void SurveyTraceCoarseTable();
+
 	// Deferred receiver channel switch after forwarding a locator channel change.
 	// radio_->Send() only *starts* the forward; changing the RF frequency before
 	// the transmit completes (OnRadioTxDone) would corrupt the very packet the
