@@ -271,8 +271,19 @@ struct FlightDataPacket {
 	uint8_t payload[kPayloadSize]; // Compressed payload bytes
 };
 
+// ── Addressed app→locator commands (ADR-0020, #34) ──────────────────────────
+// Mirrored from the locator's copy.  The receiver never inspects the target — it
+// only sizes the frame so it can be forwarded intact.  Filtering here would be
+// worthless anyway: the hazard is other people's receivers relaying their users'
+// commands onto a shared channel, which this receiver cannot see.
+struct TargetedRequest {          // ArmRequest, DisarmRequest,
+	PacketHeader packet_header;   // FlightMetadataRequest, VersionRequest
+	uint32_t target_locator_id;
+};
+
 struct FlightDataAck {
 	PacketHeader header;
+	uint32_t target_locator_id;
 	uint16_t transfer_id;
 	uint16_t packet_count;
 	static constexpr uint16_t kMaxPayloadBytes = 256;
@@ -307,6 +318,7 @@ struct AppMessage {
 
 struct LocatorRocketSettings {
 	PacketHeader header;
+	uint32_t target_locator_id;   // ADR-0020
 
 	DeployMode deployment_ch1_mode = DeployMode::DroguePrimary;
 	DeployMode deployment_ch2_mode = DeployMode::DrogueBackup;

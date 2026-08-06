@@ -678,29 +678,26 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 		case MsgType::ReceiverCfgChgRequest:
 			message_length_ = sizeof(ReceiverSettings) - sizeof(PacketHeader);
 			break;
+		// These four are addressed but otherwise payload-free (ADR-0020).
 		case MsgType::ArmRequest:
-			message_length_ = 0;
-			break;
 		case MsgType::DisarmRequest:
-			message_length_ = 0;
-			break;
 		case MsgType::FlightMetadataRequest:
-			message_length_ = 0;
+			message_length_ = sizeof(TargetedRequest) - sizeof(PacketHeader);
 			break;
 		case MsgType::FlightDataRequest:
-			message_length_ = 1;
+			message_length_ = sizeof(TargetedRequest) - sizeof(PacketHeader) + 1;  // + record
 			break;
 		case MsgType::FlightDataAck:
 			message_length_ = sizeof(FlightDataAck) - sizeof(PacketHeader);
 			break;
 		case MsgType::DeploymentTestRequest:
-			message_length_ = 1;
+			message_length_ = sizeof(TargetedRequest) - sizeof(PacketHeader) + 1;  // + channel
 			break;
 		case MsgType::ReceiverInfoRequest:
 			message_length_ = 0;
 			break;
 		case MsgType::VersionRequest:
-			message_length_ = 0;
+			message_length_ = sizeof(TargetedRequest) - sizeof(PacketHeader);
 			break;
 		case MsgType::ChannelSurveyRequest:
 			message_length_ = 0;
