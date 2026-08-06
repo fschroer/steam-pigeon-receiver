@@ -200,6 +200,18 @@ struct ChannelSurveyResponse {
 	// else are reported for display but are not evidence of a free channel.
 	uint8_t confirmed_count;
 	uint8_t confirmed_channel[kSurveyConfirmCount];
+	// Locator frames DECODED on each confirmed channel during its dwell.
+	//
+	// This is the only unambiguous answer to "is another locator using this
+	// channel", and RSSI cannot give it: a locator within a few feet raises the
+	// level on every channel at once (Appendix G), so power says "busy" everywhere
+	// and distinguishes nothing.  A frame that decodes on the dwelt channel had to
+	// be transmitted ON it — off-channel bleed does not survive the demodulator.
+	//
+	// Non-zero means occupied, whatever the level says.  Zero does not prove empty:
+	// the dwell is one broadcast period, so a sparser emitter can still slip
+	// through, and a non-locator device is invisible to this test entirely.
+	uint8_t confirmed_frames[kSurveyConfirmCount];
 };
 
 struct TelemetryMessageExtended {
@@ -260,8 +272,8 @@ static_assert(sizeof(TelemetryMessageExtended) ==  82,
 // Channel survey (ADR-0019 tier 3).  Receiver-only messages; the locator reserves
 // the MsgType values but never sends or parses these.
 static_assert(sizeof(ChannelSurveyRequest)  ==  6, "ChannelSurveyRequest is header-only");
-static_assert(sizeof(ChannelSurveyResponse) == 79,
-		"ChannelSurveyResponse size changed — sync the app's CHANNEL_SURVEY_PAYLOAD_SIZE (73)");
+static_assert(sizeof(ChannelSurveyResponse) == 84,
+		"ChannelSurveyResponse size changed — sync the app's CHANNEL_SURVEY_PAYLOAD_SIZE (78)");
 
 // On-wire packet for flight profile transfer
 struct FlightDataPacket {

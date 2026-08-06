@@ -288,6 +288,8 @@ private:
 	int8_t   survey_level_[kSurveyChannelCount] = { };
 	int16_t  survey_channel_peak_ = kNoiseFloorUnknown;
 	uint8_t  survey_confirm_channel_[kSurveyConfirmCount] = { };
+	// Locator frames decoded during each channel's confirm dwell (#33).
+	uint8_t  survey_confirm_frames_[kSurveyConfirmCount] = { };
 	uint8_t  survey_confirm_count_ = 0;    // how many made the shortlist
 	uint8_t  survey_confirm_index_ = 0;    // which of them is dwelling now
 	uint32_t survey_start_ms_ = 0;         // for kSurveyDeadlineMs

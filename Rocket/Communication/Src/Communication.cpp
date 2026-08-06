@@ -111,6 +111,27 @@ void Communication::OnRadioRxError() {
 void Communication::ProcessRadioRx() {
 	ParsedMessage parsed { };
 	if (ParseLoraFrame(rx_payload_, rx_message_size_, system_id, parsed) == ParseResult::Ok) {
+		// A frame that decodes while a confirm dwell is in progress was transmitted
+		// ON the channel being dwelt — off-channel bleed does not survive the
+		// demodulator, however loud it is.  That makes this the one unambiguous
+		// answer to "is another locator using this channel", which RSSI cannot give
+		// (#33): a locator a few feet away raises the level on every channel at
+		// once, so power says "busy" everywhere and distinguishes nothing.
+		//
+		// Counted and then DROPPED, not relayed.  During a sweep these are other
+		// people's broadcasts on channels we are only visiting; forwarding them put
+		// a stranger's PreLaunchData in front of the app mid-scan and raised a
+		// conflict banner for a locator it is not sharing a channel with at all.
+		if (survey_active_) {
+			if (survey_phase_ == SurveyPhase::Confirm &&
+					survey_confirm_index_ < kSurveyConfirmCount &&
+					survey_confirm_frames_[survey_confirm_index_] < UINT8_MAX)
+				survey_confirm_frames_[survey_confirm_index_]++;
+			RgbLed(RgbColor::Green, LedState::On);
+			last_radio_rx_end_ms_ = HAL_GetTick();
+			radio_rx_led_status_serviced_ = false;
+			return;
+		}
 		switch (parsed.type) {
 		case MsgType::PreLaunchData: {
 			last_locator_periodic_rx_ms_ = HAL_GetTick();
@@ -416,6 +437,8 @@ void Communication::BeginChannelSurvey() {
 	survey_channel_peak_ = kNoiseFloorUnknown;
 	survey_confirm_count_ = 0;
 	survey_confirm_index_ = 0;
+	for (uint8_t i = 0; i < kSurveyConfirmCount; i++)
+		survey_confirm_frames_[i] = 0;
 	for (uint8_t i = 0; i < kSurveyChannelCount; i++)
 		survey_level_[i] = 0;
 	SetChannel(survey_channel_);
@@ -516,6 +539,8 @@ void Communication::ServiceChannelSurvey() {
 			msg.confirmed_count = survey_confirm_count_;
 			std::memcpy(msg.confirmed_channel, survey_confirm_channel_,
 					sizeof(msg.confirmed_channel));
+			std::memcpy(msg.confirmed_frames, survey_confirm_frames_,
+					sizeof(msg.confirmed_frames));
 		}
 		msg.packet_header.crc = ComputeMessageCrc(msg);
 		ForwardToBluetooth(reinterpret_cast<const uint8_t*>(&msg), sizeof(msg));
@@ -571,6 +596,9 @@ void Communication::ServiceChannelSurvey() {
 	} else {
 		SurveyTraceLine("confirm ch/level", static_cast<int32_t>(survey_channel_),
 				static_cast<int32_t>(survey_level_[survey_channel_]));
+		// Frames decoded here is the load-bearing number, not the level.
+		SurveyTraceLine("confirm ch/frames", static_cast<int32_t>(survey_channel_),
+				static_cast<int32_t>(survey_confirm_frames_[survey_confirm_index_]));
 		if (++survey_confirm_index_ >= survey_confirm_count_) {
 			FinishChannelSurvey();
 			return;
