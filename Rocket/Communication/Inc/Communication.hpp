@@ -114,6 +114,11 @@ public:
 	void SetChannel(uint8_t channel);
 	void OnRadioTxDone();   // called from ISR/callback
 	void OnRadioRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraSnr_FskCfo);   // ACK reception handler
+	// Hardware CRC failure — a frame was demodulated and did not survive.  This is
+	// where collisions actually land: IRQ_CRC_ERROR routes to RadioEvents->RxError,
+	// NOT to RxDone, so nothing about it ever reached ProcessRadioRx.  Called from
+	// the radio callback, so it does the minimum and defers everything else.
+	void OnRadioRxError();
 	void ProcessRadioRx();
 	void ForwardToBluetooth(const uint8_t* buf, std::size_t len);
 	void UpdateStatusLeds();

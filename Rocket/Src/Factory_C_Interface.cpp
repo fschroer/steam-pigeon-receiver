@@ -26,6 +26,10 @@ extern "C" void ReceiverFactory_OnRadioRxDone(uint8_t *payload, uint16_t size, i
 	g_factory.OnRadioRxDone(payload, size, rssi, LoraSnr_FskCfo);
 }
 
+extern "C" void ReceiverFactory_OnRadioRxError() {
+	g_factory.OnRadioRxError();
+}
+
 extern "C" void ReceiverFactory_ProcessRadioRx() {
 	g_factory.ProcessRadioRx();
 }

@@ -30,6 +30,7 @@ public:
 	void ForwardToBluetooth(const uint8_t *data, std::size_t len);
 	void OnRadioTxDone();
 	void OnRadioRxDone(uint8_t *payload, uint16_t size, int16_t rssi, int8_t LoraSnr_FskCfo);
+	void OnRadioRxError();
 	void ProcessRadioRx();
 	void OnUART1Char(uint8_t uart_char);
 	void OnUART2Char(uint8_t uart_char);

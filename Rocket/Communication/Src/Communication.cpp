@@ -90,6 +90,23 @@ void Communication::OnRadioRxDone(uint8_t *payload, uint16_t size, int16_t rssi,
 	LoraSnr_FskCfo_ = LoraSnr_FskCfo;
 }
 
+void Communication::OnRadioRxError() {
+	// A frame was demodulated and failed the radio's own CRC: the direct signature
+	// of a collision, and until now discarded entirely one layer below us.
+	// Suppressed for the same window as the red LED, since the TX->RX transition
+	// manufactures one of these after every transmission, and during a survey,
+	// where the radio is parked on channels whose failures say nothing about home.
+	if (survey_active_)
+		return;
+	if (HAL_GetTick() - last_radio_tx_end_ms_ < kPostTxRxGuardMs)
+		return;
+	if (bad_frame_count_ < UINT8_MAX)
+		bad_frame_count_++;
+	RgbLed(RgbColor::Red, LedState::On);
+	last_radio_rx_end_ms_ = HAL_GetTick();
+	radio_rx_led_status_serviced_ = false;
+}
+
 void Communication::ProcessRadioRx() {
 	ParsedMessage parsed { };
 	if (ParseLoraFrame(rx_payload_, rx_message_size_, system_id, parsed) == ParseResult::Ok) {
@@ -274,6 +291,11 @@ ParseResult Communication::ParseLoraFrame(const uint8_t *data, std::size_t len, 
 uint8_t Communication::TakeBadFrameCount() {
 	const uint8_t n = bad_frame_count_;
 	bad_frame_count_ = 0;
+	// Console evidence, so "is the receiver seeing collisions at all?" is something
+	// you can read rather than infer.  Only on a non-zero count, so a healthy link
+	// stays silent; called from the main loop, not the radio callback.
+	if (n != 0)
+		SurveyTraceLine("bad frames", static_cast<int32_t>(n), 0);
 	return n;
 }
 

@@ -26,6 +26,7 @@
 
 /* USER CODE BEGIN Includes */
 #include "main.h"
+#include "Factory_C_Interface.h"
 
 /* USER CODE END Includes */
 
@@ -229,6 +230,11 @@ static void OnRxTimeout(void)
 static void OnRxError(void)
 {
   /* USER CODE BEGIN OnRxError */
+  /* IRQ_CRC_ERROR lands here, NOT in OnRxDone: a frame was demodulated and failed
+   * the radio's own CRC, which is the direct signature of a collision.  This is
+   * where two locators clobbering each other actually shows up, and it used to be
+   * discarded -- the callback only re-armed the receiver. */
+  ReceiverFactory_OnRadioRxError();
   Radio.Rx(RX_TIMEOUT_VALUE);
   /* USER CODE END OnRxError */
 }

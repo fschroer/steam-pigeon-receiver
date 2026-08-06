@@ -44,6 +44,10 @@ void Factory::OnRadioTxDone() {
 	comm_.OnRadioTxDone();
 }
 
+void Factory::OnRadioRxError() {
+	comm_.OnRadioRxError();
+}
+
 void Factory::ProcessRadioRx() {
 	comm_.ProcessRadioRx();
 }
