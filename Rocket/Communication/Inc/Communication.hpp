@@ -183,6 +183,10 @@ private:
 	// so it lags by one ~1 s period.  Irrelevant at the timescale a user reacts on.
 	static constexpr int16_t  kNoiseFloorUnknown = INT16_MIN;  // no sample this interval
 	static constexpr uint32_t kNoiseSampleIntervalMs = 20u;
+	// Broadcasts are ~1 s apart; past this the next one is late, so we are already
+	// losing packets and sampling resumes outside the safe window.  See the
+	// reasoning in ServiceNoiseFloor for why that cannot produce a false positive.
+	static constexpr uint32_t kPeriodicOverdueMs = 1500u;
 	int16_t  noise_floor_peak_ = kNoiseFloorUnknown;
 	uint32_t last_noise_sample_ms_ = 0;
 	// Read the accumulated peak and start a fresh interval.

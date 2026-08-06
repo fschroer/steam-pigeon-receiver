@@ -281,10 +281,25 @@ void Communication::ServiceNoiseFloor() {
 	// In flight-profile mode the locator bursts on no fixed schedule, so no safe
 	// window exists and sampling stops.  That is also when the user is on the
 	// ground pulling data and has no use for it.
-	if (!locator_periodic_ever_rx_ || locator_in_profile_mode_)
+	if (locator_in_profile_mode_)
 		return;
 	const uint32_t elapsed = now - last_locator_periodic_rx_ms_;
-	if (elapsed < kPostPrelaunchMinMs || elapsed >= kPostPrelaunchMaxMs)
+	const bool in_safe_window =
+			(locator_periodic_ever_rx_ &&
+			 elapsed >= kPostPrelaunchMinMs && elapsed < kPostPrelaunchMaxMs);
+	// Once a broadcast is overdue we are ALREADY missing packets — and explaining
+	// why is the entire point of this measurement.  Restricting sampling to the
+	// safe window meant the floor stopped being measured exactly when the channel
+	// was at its worst, so a co-channel interferer that was destroying broadcasts
+	// reported a clean floor and no alert.
+	//
+	// Sampling here cannot produce a false positive: the only thing that could
+	// contaminate it is the locator's own carrier, and if its carrier were audible
+	// and uncollided we would have received the packet and not be overdue.  Hearing
+	// energy here while missing the broadcast IS the collision we are looking for.
+	// A locator that is simply switched off leaves a quiet channel and raises nothing.
+	const bool overdue = (elapsed >= kPeriodicOverdueMs);
+	if (!in_safe_window && !overdue)
 		return;
 	if (now - last_noise_sample_ms_ < kNoiseSampleIntervalMs)
 		return;
