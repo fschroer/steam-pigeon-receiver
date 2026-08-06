@@ -210,23 +210,40 @@ private:
 	//    channel cannot be changed in flight anyway.
 	//
 	// The locator is not involved: it never sees either message.
+	// Two-phase sweep.  A locator is on air ~138 ms per second, so a short dwell
+	// lands in the gap most of the time and reports an occupied channel as quiet —
+	// a bench sweep ranked the channel both locators were using as the quietest in
+	// the band.  Detecting a 1 Hz emitter reliably needs a dwell longer than its
+	// period; 64 of those is a minute, so instead the coarse pass only shortlists
+	// and the expensive dwell is spent confirming the few channels we might
+	// actually recommend.
 	static constexpr uint32_t kSurveySettleMs = 2u;   // let the PLL settle before believing RSSI
-	static constexpr uint32_t kSurveyDwellMs  = 15u;  // total per channel, settle included
+	static constexpr uint32_t kSurveyDwellMs  = 12u;  // coarse, per channel, settle included
+	// Must exceed the ~1 s broadcast period so at least one transmission is
+	// guaranteed to fall inside it, with margin for cadence jitter.
+	static constexpr uint32_t kSurveyConfirmDwellMs = 1200u;
 	// Mirrors the PHY's RX_TIMEOUT_VALUE (subghz_phy_app.c).  Used only to re-arm
 	// RX after a sweep; if that constant changes, this must follow.
 	static constexpr uint32_t kRxTimeoutMs = 3000u;
 
+	enum class SurveyPhase : uint8_t { Coarse, Confirm };
+
 	bool     survey_active_ = false;
 	bool     survey_response_pending_ = false;
 	ChannelSurveyStatus survey_status_ = ChannelSurveyStatus::Ok;
+	SurveyPhase survey_phase_ = SurveyPhase::Coarse;
 	uint8_t  survey_channel_ = 0;          // channel currently dwelling
 	uint32_t survey_channel_start_ms_ = 0;
 	uint8_t  survey_home_channel_ = 0;     // restored when the sweep finishes or aborts
 	int8_t   survey_level_[kSurveyChannelCount] = { };
 	int16_t  survey_channel_peak_ = kNoiseFloorUnknown;
+	uint8_t  survey_confirm_channel_[kSurveyConfirmCount] = { };
+	uint8_t  survey_confirm_count_ = 0;    // how many made the shortlist
+	uint8_t  survey_confirm_index_ = 0;    // which of them is dwelling now
 
 	void BeginChannelSurvey();
-	void FinishChannelSurvey();   // restores channel + RX and queues the response
+	void BeginSurveyConfirmPhase();  // shortlists the quietest coarse candidates
+	void FinishChannelSurvey();      // restores channel + RX and queues the response
 
 	// Deferred receiver channel switch after forwarding a locator channel change.
 	// radio_->Send() only *starts* the forward; changing the RF frequency before

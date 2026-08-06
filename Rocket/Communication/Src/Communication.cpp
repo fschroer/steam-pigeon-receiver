@@ -331,10 +331,48 @@ void Communication::BeginChannelSurvey() {
 	survey_home_channel_ = archive_.GetReceiverSettings().lora_channel;
 	survey_status_  = ChannelSurveyStatus::Ok;
 	survey_active_  = true;
+	survey_phase_   = SurveyPhase::Coarse;
 	survey_channel_ = 0;
 	survey_channel_peak_ = kNoiseFloorUnknown;
+	survey_confirm_count_ = 0;
+	survey_confirm_index_ = 0;
 	for (uint8_t i = 0; i < kSurveyChannelCount; i++)
 		survey_level_[i] = 0;
+	SetChannel(survey_channel_);
+	survey_channel_start_ms_ = HAL_GetTick();
+}
+
+void Communication::BeginSurveyConfirmPhase() {
+	// Shortlist the quietest coarse candidates.  Selection rather than a sort: we
+	// only need the few we might recommend, and this runs on the main loop.
+	bool taken[kSurveyChannelCount] = { };
+	survey_confirm_count_ = 0;
+	for (uint8_t n = 0; n < kSurveyConfirmCount; n++) {
+		uint8_t best = kSurveyChannelCount;
+		for (uint8_t ch = 0; ch < kSurveyChannelCount; ch++) {
+			if (taken[ch])
+				continue;
+			if (best == kSurveyChannelCount || survey_level_[ch] < survey_level_[best])
+				best = ch;
+		}
+		if (best == kSurveyChannelCount)
+			break;
+		taken[best] = true;
+		survey_confirm_channel_[survey_confirm_count_++] = best;
+	}
+	survey_phase_ = SurveyPhase::Confirm;
+	survey_confirm_index_ = 0;
+	// Discard the coarse reading for each shortlisted channel: it is the value we
+	// distrust, and keeping it as a floor would let a lucky quiet sample mask what
+	// the long dwell is about to find.
+	for (uint8_t i = 0; i < survey_confirm_count_; i++)
+		survey_level_[survey_confirm_channel_[i]] = 0;
+	survey_channel_peak_ = kNoiseFloorUnknown;
+	if (survey_confirm_count_ == 0) {
+		FinishChannelSurvey();
+		return;
+	}
+	survey_channel_ = survey_confirm_channel_[0];
 	SetChannel(survey_channel_);
 	survey_channel_start_ms_ = HAL_GetTick();
 }
@@ -365,8 +403,12 @@ void Communication::ServiceChannelSurvey() {
 		msg.status        = static_cast<uint8_t>(survey_status_);
 		msg.channel_count = (survey_status_ == ChannelSurveyStatus::Ok) ? kSurveyChannelCount : 0;
 		msg.home_channel  = archive_.GetReceiverSettings().lora_channel;
-		if (survey_status_ == ChannelSurveyStatus::Ok)
+		if (survey_status_ == ChannelSurveyStatus::Ok) {
 			std::memcpy(msg.level, survey_level_, sizeof(msg.level));
+			msg.confirmed_count = survey_confirm_count_;
+			std::memcpy(msg.confirmed_channel, survey_confirm_channel_,
+					sizeof(msg.confirmed_channel));
+		}
 		msg.packet_header.crc = ComputeMessageCrc(msg);
 		ForwardToBluetooth(reinterpret_cast<const uint8_t*>(&msg), sizeof(msg));
 		return;
@@ -383,6 +425,8 @@ void Communication::ServiceChannelSurvey() {
 		return;
 	}
 
+	const uint32_t dwell =
+			(survey_phase_ == SurveyPhase::Coarse) ? kSurveyDwellMs : kSurveyConfirmDwellMs;
 	const uint32_t elapsed = HAL_GetTick() - survey_channel_start_ms_;
 	if (elapsed >= kSurveySettleMs) {
 		// Sample as fast as the loop allows rather than on a timer: bursty
@@ -391,16 +435,24 @@ void Communication::ServiceChannelSurvey() {
 		if (survey_channel_peak_ == kNoiseFloorUnknown || rssi > survey_channel_peak_)
 			survey_channel_peak_ = rssi;
 	}
-	if (elapsed < kSurveyDwellMs)
+	if (elapsed < dwell)
 		return;
 
 	survey_level_[survey_channel_] =
 			(survey_channel_peak_ == kNoiseFloorUnknown) ? 0 : static_cast<int8_t>(survey_channel_peak_);
 	survey_channel_peak_ = kNoiseFloorUnknown;
 
-	if (++survey_channel_ >= kSurveyChannelCount) {
-		FinishChannelSurvey();
-		return;
+	if (survey_phase_ == SurveyPhase::Coarse) {
+		if (++survey_channel_ >= kSurveyChannelCount) {
+			BeginSurveyConfirmPhase();
+			return;
+		}
+	} else {
+		if (++survey_confirm_index_ >= survey_confirm_count_) {
+			FinishChannelSurvey();
+			return;
+		}
+		survey_channel_ = survey_confirm_channel_[survey_confirm_index_];
 	}
 	SetChannel(survey_channel_);
 	survey_channel_start_ms_ = HAL_GetTick();

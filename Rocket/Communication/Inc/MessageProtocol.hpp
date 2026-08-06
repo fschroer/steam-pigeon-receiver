@@ -163,6 +163,9 @@ struct TelemetryData {
 // asks the receiver to sweep the band and report per-channel occupancy.  The
 // locator is not involved and never sees either message.
 inline constexpr uint8_t kSurveyChannelCount = 64;   // channels 0..63
+// How many of the quietest coarse candidates get a full-period confirmation dwell.
+// Only these are trustworthy enough to recommend; see ChannelSurveyResponse.
+inline constexpr uint8_t kSurveyConfirmCount = 5;
 
 enum class ChannelSurveyStatus : uint8_t {
 	Ok           = 0,
@@ -183,6 +186,19 @@ struct ChannelSurveyResponse {
 	// other within one sweep; NOT trustworthy as absolute levels (SX126x RSSI is
 	// uncalibrated near the floor), which is why the app ranks rather than reports.
 	int8_t  level[kSurveyChannelCount];
+	// Channels that got the long confirmation dwell, and are therefore the only
+	// ones the app may recommend.
+	//
+	// A locator transmits ~138 ms once per second — ~14% duty cycle — so a short
+	// coarse dwell usually lands in the gap and reads an occupied channel as quiet.
+	// (This is not hypothetical: a bench sweep ranked the channel BOTH locators
+	// were sitting on as the quietest in the band.)  Catching a 1 Hz emitter
+	// reliably needs a dwell longer than its period, which is unaffordable across
+	// all 64 channels, so the sweep is two-phase: a fast coarse pass to shortlist,
+	// then a full-period dwell on the quietest few.  Coarse levels for everything
+	// else are reported for display but are not evidence of a free channel.
+	uint8_t confirmed_count;
+	uint8_t confirmed_channel[kSurveyConfirmCount];
 };
 
 struct TelemetryMessageExtended {
@@ -242,8 +258,8 @@ static_assert(sizeof(TelemetryMessageExtended) ==  81,
 // Channel survey (ADR-0019 tier 3).  Receiver-only messages; the locator reserves
 // the MsgType values but never sends or parses these.
 static_assert(sizeof(ChannelSurveyRequest)  ==  6, "ChannelSurveyRequest is header-only");
-static_assert(sizeof(ChannelSurveyResponse) == 73,
-		"ChannelSurveyResponse size changed — sync the app's CHANNEL_SURVEY_PAYLOAD_SIZE (67)");
+static_assert(sizeof(ChannelSurveyResponse) == 79,
+		"ChannelSurveyResponse size changed — sync the app's CHANNEL_SURVEY_PAYLOAD_SIZE (73)");
 
 // On-wire packet for flight profile transfer
 struct FlightDataPacket {
