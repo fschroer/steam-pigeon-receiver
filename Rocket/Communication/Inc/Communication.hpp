@@ -219,6 +219,19 @@ private:
 	// actually recommend.
 	static constexpr uint32_t kSurveySettleMs = 2u;   // let the PLL settle before believing RSSI
 	static constexpr uint32_t kSurveyDwellMs  = 12u;  // coarse, per channel, settle included
+	// Visit the band strided rather than 0,1,2...  A 138 ms burst spans ~11 coarse
+	// dwells, so in channel order it paints ~11 ADJACENT channels loud — the coarse
+	// table then reads as blocks that describe *when* the sweep ran, not which
+	// channels are busy.  Worse, it is systematically biased: channels visited
+	// during one quiet gap are shortlisted together, which is how a bench sweep
+	// shortlisted channels 1 and 2 — the two immediately beside the occupied
+	// channel 0, and the worst in the band once confirmed.
+	//
+	// 7 is co-prime with 64, so visits 0..63 still cover every channel exactly
+	// once, but a single burst now smears across channels ~7 apart instead of
+	// neighbours. The time artifact remains; it just stops correlating with
+	// frequency, so the shortlist is no longer drawn from one accidental region.
+	static constexpr uint8_t  kSurveyCoarseStride = 7u;
 	// Must exceed the ~1 s broadcast period so at least one transmission is
 	// guaranteed to fall inside it, with margin for cadence jitter.
 	static constexpr uint32_t kSurveyConfirmDwellMs = 1200u;
@@ -243,6 +256,7 @@ private:
 	ChannelSurveyStatus survey_status_ = ChannelSurveyStatus::Ok;
 	SurveyPhase survey_phase_ = SurveyPhase::Coarse;
 	uint8_t  survey_channel_ = 0;          // channel currently dwelling
+	uint8_t  survey_visit_ = 0;            // coarse visit index; channel is strided from it
 	uint32_t survey_channel_start_ms_ = 0;
 	uint8_t  survey_home_channel_ = 0;     // restored when the sweep finishes or aborts
 	int8_t   survey_level_[kSurveyChannelCount] = { };

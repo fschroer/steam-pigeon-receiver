@@ -371,6 +371,7 @@ void Communication::BeginChannelSurvey() {
 	survey_status_  = ChannelSurveyStatus::Ok;
 	survey_active_  = true;
 	survey_phase_   = SurveyPhase::Coarse;
+	survey_visit_   = 0;
 	survey_channel_ = 0;
 	survey_channel_peak_ = kNoiseFloorUnknown;
 	survey_confirm_count_ = 0;
@@ -504,10 +505,12 @@ void Communication::ServiceChannelSurvey() {
 	survey_channel_peak_ = kNoiseFloorUnknown;
 
 	if (survey_phase_ == SurveyPhase::Coarse) {
-		if (++survey_channel_ >= kSurveyChannelCount) {
+		if (++survey_visit_ >= kSurveyChannelCount) {
 			BeginSurveyConfirmPhase();
 			return;
 		}
+		survey_channel_ = static_cast<uint8_t>(
+				(static_cast<uint16_t>(survey_visit_) * kSurveyCoarseStride) % kSurveyChannelCount);
 	} else {
 		SurveyTraceLine("confirm ch/level", static_cast<int32_t>(survey_channel_),
 				static_cast<int32_t>(survey_level_[survey_channel_]));
