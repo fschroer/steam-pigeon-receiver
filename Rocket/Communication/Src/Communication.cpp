@@ -455,7 +455,23 @@ void Communication::BeginSurveyConfirmPhase() {
 	// only need the few we might recommend, and this runs on the main loop.
 	bool taken[kSurveyChannelCount] = { };
 	survey_confirm_count_ = 0;
-	for (uint8_t n = 0; n < kSurveyConfirmCount; n++) {
+	// Slot 0 is always the home channel.
+	//
+	// It is the channel the user is actually ON, and it was previously confirmed
+	// only by luck: in one bench sweep it tied with sixteen others at the noise
+	// floor — its own locator's burst having been missed by the 12 ms coarse dwell —
+	// and was never evaluated. "Is my current channel contested?" is the first
+	// question a survey should answer and it could not.
+	//
+	// It also gives the frame counter deterministic coverage. Our own locator
+	// transmits here, so every sweep exercises the decode path on a channel known
+	// to be occupied, instead of waiting for a coarse miss to coincide with a
+	// favourable tie-break.
+	if (survey_home_channel_ < kSurveyChannelCount) {
+		taken[survey_home_channel_] = true;
+		survey_confirm_channel_[survey_confirm_count_++] = survey_home_channel_;
+	}
+	while (survey_confirm_count_ < kSurveyConfirmCount) {
 		// Quietest level still available.
 		bool found = false;
 		int8_t best_level = 0;
