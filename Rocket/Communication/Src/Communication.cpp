@@ -456,12 +456,51 @@ void Communication::BeginSurveyConfirmPhase() {
 	bool taken[kSurveyChannelCount] = { };
 	survey_confirm_count_ = 0;
 	for (uint8_t n = 0; n < kSurveyConfirmCount; n++) {
-		uint8_t best = kSurveyChannelCount;
+		// Quietest level still available.
+		bool found = false;
+		int8_t best_level = 0;
 		for (uint8_t ch = 0; ch < kSurveyChannelCount; ch++) {
 			if (taken[ch])
 				continue;
-			if (best == kSurveyChannelCount || survey_level_[ch] < survey_level_[best])
+			if (!found || survey_level_[ch] < best_level) {
+				best_level = survey_level_[ch];
+				found = true;
+			}
+		}
+		if (!found)
+			break;
+		// Among the channels AT that level, take the one furthest from those
+		// already chosen.
+		//
+		// At the noise floor a large fraction of the band ties — a real sweep had
+		// 17 channels at -115 — and breaking those ties by channel number drew all
+		// five candidates from one corner (11, 12, 14, 25, 28) every single run.
+		// Two things went wrong with that. The recommendation only ever came from
+		// the low end, so most of the band was never evaluated at all; and a
+		// channel that ties but is high-numbered could never be confirmed, which
+		// is exactly where the frame count would have caught an occupied channel
+		// the coarse pass missed. In that same sweep the HOME channel tied at -115
+		// (its own locator's burst was missed) and sat eleventh in the tie list.
+		//
+		// Deterministic, so repeat sweeps still agree: the first pick is the
+		// lowest-numbered minimum, and each later pick maximises its distance from
+		// the ones already taken.
+		uint8_t best = kSurveyChannelCount;
+		uint8_t best_spread = 0;
+		for (uint8_t ch = 0; ch < kSurveyChannelCount; ch++) {
+			if (taken[ch] || survey_level_[ch] != best_level)
+				continue;
+			uint8_t spread = kSurveyChannelCount;   // nothing chosen yet
+			for (uint8_t i = 0; i < survey_confirm_count_; i++) {
+				const uint8_t sel = survey_confirm_channel_[i];
+				const uint8_t d = (ch > sel) ? (ch - sel) : (sel - ch);
+				if (d < spread)
+					spread = d;
+			}
+			if (best == kSurveyChannelCount || spread > best_spread) {
 				best = ch;
+				best_spread = spread;
+			}
 		}
 		if (best == kSurveyChannelCount)
 			break;
