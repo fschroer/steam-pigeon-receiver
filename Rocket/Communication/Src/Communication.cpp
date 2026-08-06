@@ -96,6 +96,7 @@ void Communication::ProcessRadioRx() {
 			last_locator_periodic_rx_ms_ = HAL_GetTick();
 			locator_periodic_ever_rx_    = true;
 			locator_in_profile_mode_         = false;  // locator returned to Disarmed
+			locator_armed_                   = false;  // PreLaunchData ⇒ disarmed
 			PreLaunchMessageExtended ext { };
 			// Copy the original message
 			std::memcpy(&ext.base, &parsed.prelaunch, sizeof(PreLaunchData));
@@ -117,6 +118,7 @@ void Communication::ProcessRadioRx() {
 		case MsgType::TelemetryData: {
 			last_locator_periodic_rx_ms_ = HAL_GetTick();
 			locator_periodic_ever_rx_    = true;
+			locator_armed_               = true;   // TelemetryData ⇒ armed
 			TelemetryMessageExtended ext { };
 			std::memcpy(&ext.base, &parsed.telemetry, sizeof(TelemetryData));
 			ext.rssi = rssi_;
@@ -261,6 +263,10 @@ int16_t Communication::TakeNoiseFloor() {
 void Communication::ServiceNoiseFloor() {
 	if (radio_ == nullptr || radio_busy_)
 		return;
+	// A survey parks the radio on other channels; anything sampled then belongs to
+	// a different frequency and would poison the home channel's floor.
+	if (survey_active_)
+		return;
 	const uint32_t now = HAL_GetTick();
 	// Never read RSSI while our own transmit is still settling.
 	if (now - last_radio_tx_end_ms_ < kPostTxRxGuardMs)
@@ -289,7 +295,109 @@ void Communication::ServiceNoiseFloor() {
 		noise_floor_peak_ = rssi;
 }
 
+void Communication::BeginChannelSurvey() {
+	if (survey_active_ || radio_ == nullptr)
+		return;
+	// Enforce the refusals here rather than trusting the app's gate, which is
+	// soft (ADR-0006).  A sweep is deaf to the locator for ~1 s: harmless on the
+	// ground, lost telemetry in flight — and the channel cannot be changed in
+	// flight anyway, so the result would be unusable even if we took it.
+	if (locator_armed_) {
+		survey_status_ = ChannelSurveyStatus::RefusedArmed;
+		survey_response_pending_ = true;
+		return;
+	}
+	if (locator_in_profile_mode_) {
+		survey_status_ = ChannelSurveyStatus::RefusedBusy;
+		survey_response_pending_ = true;
+		return;
+	}
+
+	survey_home_channel_ = archive_.GetReceiverSettings().lora_channel;
+	survey_status_  = ChannelSurveyStatus::Ok;
+	survey_active_  = true;
+	survey_channel_ = 0;
+	survey_channel_peak_ = kNoiseFloorUnknown;
+	for (uint8_t i = 0; i < kSurveyChannelCount; i++)
+		survey_level_[i] = 0;
+	SetChannel(survey_channel_);
+	survey_channel_start_ms_ = HAL_GetTick();
+}
+
+void Communication::FinishChannelSurvey() {
+	survey_active_ = false;
+	// Full restore, in this order.  Returning only the channel would leave the
+	// radio on the home frequency but not listening if the PHY's RX timeout
+	// happened to expire mid-sweep — the link would look dead for no visible
+	// reason (ADR-0019 Decision 6).
+	SetChannel(survey_home_channel_);
+	if (radio_ != nullptr)
+		radio_->Rx(kRxTimeoutMs);
+	// The noise-floor accumulator sampled other channels during the sweep, so its
+	// current peak describes the wrong frequency.  Discard it.
+	noise_floor_peak_ = kNoiseFloorUnknown;
+	survey_response_pending_ = true;
+}
+
+void Communication::ServiceChannelSurvey() {
+	if (survey_response_pending_) {
+		survey_response_pending_ = false;
+		ChannelSurveyResponse msg { };
+		msg.packet_header.system_id = system_id;
+		msg.packet_header.msg_type  = MsgType::ChannelSurvey;
+		msg.packet_header.msg_count = 0;
+		msg.packet_header.crc       = 0;
+		msg.status        = static_cast<uint8_t>(survey_status_);
+		msg.channel_count = (survey_status_ == ChannelSurveyStatus::Ok) ? kSurveyChannelCount : 0;
+		msg.home_channel  = archive_.GetReceiverSettings().lora_channel;
+		if (survey_status_ == ChannelSurveyStatus::Ok)
+			std::memcpy(msg.level, survey_level_, sizeof(msg.level));
+		msg.packet_header.crc = ComputeMessageCrc(msg);
+		ForwardToBluetooth(reinterpret_cast<const uint8_t*>(&msg), sizeof(msg));
+		return;
+	}
+	if (!survey_active_ || radio_ == nullptr)
+		return;
+
+	// Abort rather than push on if the locator arms mid-sweep.  Arming is a
+	// deliberate act by someone standing at the pad; finishing the sweep would
+	// keep the receiver deaf through the first seconds of a live flight.
+	if (locator_armed_) {
+		survey_status_ = ChannelSurveyStatus::RefusedArmed;
+		FinishChannelSurvey();
+		return;
+	}
+
+	const uint32_t elapsed = HAL_GetTick() - survey_channel_start_ms_;
+	if (elapsed >= kSurveySettleMs) {
+		// Sample as fast as the loop allows rather than on a timer: bursty
+		// interference is exactly what a sparse sample set misses.
+		const int16_t rssi = radio_->Rssi();
+		if (survey_channel_peak_ == kNoiseFloorUnknown || rssi > survey_channel_peak_)
+			survey_channel_peak_ = rssi;
+	}
+	if (elapsed < kSurveyDwellMs)
+		return;
+
+	survey_level_[survey_channel_] =
+			(survey_channel_peak_ == kNoiseFloorUnknown) ? 0 : static_cast<int8_t>(survey_channel_peak_);
+	survey_channel_peak_ = kNoiseFloorUnknown;
+
+	if (++survey_channel_ >= kSurveyChannelCount) {
+		FinishChannelSurvey();
+		return;
+	}
+	SetChannel(survey_channel_);
+	survey_channel_start_ms_ = HAL_GetTick();
+}
+
 void Communication::ServicePendingTx() {
+	// Never transmit while a survey has the radio parked on another channel: the
+	// burst would go out on the survey frequency, so the locator would not hear it
+	// and whatever is on that channel would. The queued message simply waits —
+	// ServicePendingTx is polled, and a sweep is over in about a second.
+	if (survey_active_)
+		return;
 	// Apply a deferred receiver channel switch once the forwarded locator config
 	// change has finished transmitting.  Done here (main loop), not right after
 	// radio_->Send(), so we never change RF frequency mid-transmit and corrupt the
@@ -461,6 +569,9 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 		case MsgType::VersionRequest:
 			message_length_ = 0;
 			break;
+		case MsgType::ChannelSurveyRequest:
+			message_length_ = 0;
+			break;
 		}
 		if (message_length_ > 64) { // Safety check
 			Reset();
@@ -491,6 +602,10 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 				if (current_msg_.header.msg_type == MsgType::ReceiverInfoRequest) {
 					// Handled locally — queue a BLE response, never forward to locator.
 					receiver_info_response_pending_ = true;
+				} else if (current_msg_.header.msg_type == MsgType::ChannelSurveyRequest) {
+					// Also receiver-local: the locator plays no part in a survey and
+					// must never see this message.
+					BeginChannelSurvey();
 				} else {
 					// Zero-payload message (e.g. ArmRequest, DisarmRequest): queue for
 					// timed forwarding to the locator.

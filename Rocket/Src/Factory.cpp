@@ -35,6 +35,7 @@ void Factory::Service() {
 	comm_.UpdateStatusLeds();
 	comm_.ServicePendingTx();
 	comm_.ServiceNoiseFloor();
+	comm_.ServiceChannelSurvey();
 	comm_.ServiceBleNameUpdate();
 	comm_.ServiceReceiverInfoResponse();
 }

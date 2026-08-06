@@ -36,7 +36,9 @@ enum class MsgType : uint8_t {
 	ReceiverInfo = 16,          // Response from the receiver with its current LoRa channel and device name.
 	VersionRequest = 17,        // Request from the app, via the receiver, for both firmware versions.
 	VersionInfo = 18,           // Response: locator version forwarded through receiver, which appends its own version.
-	FlightEvents = 19           // Per-record flight event summary sent alongside a FlightData transfer.
+	FlightEvents = 19,          // Per-record flight event summary sent alongside a FlightData transfer.
+	ChannelSurveyRequest = 20,  // Request from the app to the receiver to sweep the band (no locator involved).
+	ChannelSurvey = 21          // Response from the receiver with per-channel occupancy.
 };
 
 // Flight event summary indices — wire order of FlightEventsMessage::event_timestamp_ms.
@@ -157,6 +159,32 @@ struct TelemetryData {
 	uint32_t auth_tag;     // password-seeded checksum; receiver never inspects it
 };
 
+// Channel survey (ADR-0019 tier 3, #33).  Receiver-directed end to end: the app
+// asks the receiver to sweep the band and report per-channel occupancy.  The
+// locator is not involved and never sees either message.
+inline constexpr uint8_t kSurveyChannelCount = 64;   // channels 0..63
+
+enum class ChannelSurveyStatus : uint8_t {
+	Ok           = 0,
+	RefusedArmed = 1,   // locator is armed — sweeping would drop flight telemetry
+	RefusedBusy  = 2,   // flight-data transfer in progress
+};
+
+struct ChannelSurveyRequest {
+	PacketHeader packet_header;
+};
+
+struct ChannelSurveyResponse {
+	PacketHeader packet_header;
+	uint8_t status;         // ChannelSurveyStatus; levels are meaningless unless Ok
+	uint8_t channel_count;  // channels actually measured; 0 when refused
+	uint8_t home_channel;   // receiver's own channel, so the app can mark it in the ranking
+	// Peak RSSI seen on each channel during its dwell, dBm.  Comparable to each
+	// other within one sweep; NOT trustworthy as absolute levels (SX126x RSSI is
+	// uncalibrated near the floor), which is why the app ranks rather than reports.
+	int8_t  level[kSurveyChannelCount];
+};
+
 struct TelemetryMessageExtended {
 	TelemetryData base;     // original message
 	int16_t rssi;           // RSSI seen by receiver (dBm)
@@ -210,6 +238,12 @@ static_assert(sizeof(PreLaunchMessageExtended) == 143,
 		"PreLaunchMessageExtended size changed — sync the app's PRELAUNCH_MESSAGE_PAYLOAD_SIZE (137)");
 static_assert(sizeof(TelemetryMessageExtended) ==  81,
 		"TelemetryMessageExtended size changed — sync the app's TELEMETRY_MESSAGE_PAYLOAD_SIZE (75)");
+
+// Channel survey (ADR-0019 tier 3).  Receiver-only messages; the locator reserves
+// the MsgType values but never sends or parses these.
+static_assert(sizeof(ChannelSurveyRequest)  ==  6, "ChannelSurveyRequest is header-only");
+static_assert(sizeof(ChannelSurveyResponse) == 73,
+		"ChannelSurveyResponse size changed — sync the app's CHANNEL_SURVEY_PAYLOAD_SIZE (67)");
 
 // On-wire packet for flight profile transfer
 struct FlightDataPacket {

@@ -124,6 +124,9 @@ public:
 	// Call from the main loop: takes an idle-channel RSSI sample when the timing
 	// is known safe, and accumulates the peak for the next broadcast (ADR-0019).
 	void ServiceNoiseFloor();
+	// Call from the main loop: advances the channel survey one slice per call
+	// (ADR-0019 tier 3).  Never blocks for the whole sweep.
+	void ServiceChannelSurvey();
 	void ServiceBleNameUpdate();
 	void QueueBleNameUpdate(const char* name);
 	void ServiceReceiverInfoResponse();
@@ -185,6 +188,42 @@ private:
 	// Read the accumulated peak and start a fresh interval.
 	int16_t TakeNoiseFloor();
 
+	// ── Channel survey (ADR-0019 tier 3, #33) ─────────────────────────────────
+	//
+	// Sweeps channels 0..63 sampling the idle level on each, so the app can rank
+	// them and recommend a quiet one.  Three properties are load-bearing:
+	//
+	// 1. **Time-sliced, never blocking.** A whole sweep is ~1 s; running it inside
+	//    one Service() call would stall BLE servicing and the forwarding windows
+	//    for that entire second.  One slice per call instead.
+	// 2. **Stays in LoRa RX the whole way.** Only the channel changes.  The obvious
+	//    primitive, Radio.IsChannelFree(), switches the modem to FSK and leaves the
+	//    radio in standby — restoring only the channel after that would leave the
+	//    link dead in a way that looks like a receiver failure (ADR-0019 Decision 6).
+	//    Retuning in place means the restore is just channel + Rx re-arm.
+	// 3. **Refused while armed.** The sweep is deaf to the locator for its duration.
+	//    On the ground that is a blink; in flight it is lost telemetry, and the
+	//    channel cannot be changed in flight anyway.
+	//
+	// The locator is not involved: it never sees either message.
+	static constexpr uint32_t kSurveySettleMs = 2u;   // let the PLL settle before believing RSSI
+	static constexpr uint32_t kSurveyDwellMs  = 15u;  // total per channel, settle included
+	// Mirrors the PHY's RX_TIMEOUT_VALUE (subghz_phy_app.c).  Used only to re-arm
+	// RX after a sweep; if that constant changes, this must follow.
+	static constexpr uint32_t kRxTimeoutMs = 3000u;
+
+	bool     survey_active_ = false;
+	bool     survey_response_pending_ = false;
+	ChannelSurveyStatus survey_status_ = ChannelSurveyStatus::Ok;
+	uint8_t  survey_channel_ = 0;          // channel currently dwelling
+	uint32_t survey_channel_start_ms_ = 0;
+	uint8_t  survey_home_channel_ = 0;     // restored when the sweep finishes or aborts
+	int8_t   survey_level_[kSurveyChannelCount] = { };
+	int16_t  survey_channel_peak_ = kNoiseFloorUnknown;
+
+	void BeginChannelSurvey();
+	void FinishChannelSurvey();   // restores channel + RX and queues the response
+
 	// Deferred receiver channel switch after forwarding a locator channel change.
 	// radio_->Send() only *starts* the forward; changing the RF frequency before
 	// the transmit completes (OnRadioTxDone) would corrupt the very packet the
@@ -202,6 +241,12 @@ private:
 	// app→locator commands forward immediately, and deferred-ACK logic governs
 	// FlightDataAck.  Cleared when PreLaunchData resumes (locator back to Disarmed).
 	bool     locator_in_profile_mode_ = false;
+
+	// True when the last periodic packet was TelemetryData rather than PreLaunchData,
+	// i.e. the locator is armed.  The app gates the survey too, but that gate is
+	// app-side and soft (ADR-0006); this one is the enforcement that actually
+	// protects flight telemetry from a sweep.
+	bool     locator_armed_ = false;
 	// Timestamp of the last received FlightData or FlightDataParity packet.
 	// Used to detect when the locator's burst has ended (no new packet for
 	// kAckDeferMs ms) so the cumulative ACK can be safely forwarded.
