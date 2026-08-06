@@ -112,6 +112,7 @@ void Communication::ProcessRadioRx() {
 			ext.rssi = rssi_;
 			ext.snr = LoraSnr_FskCfo_;
 			ext.noise_floor = TakeNoiseFloor();
+			ext.bad_frames = TakeBadFrameCount();
 			// Recompute CRC over the extended struct
 			ext.base.packet_header.crc = ComputeSendMessageCrc(ext);
 			ForwardToBluetooth(reinterpret_cast<const uint8_t*>(&ext), sizeof(ext));
@@ -126,6 +127,7 @@ void Communication::ProcessRadioRx() {
 			ext.rssi = rssi_;
 			ext.snr = LoraSnr_FskCfo_;
 			ext.noise_floor = TakeNoiseFloor();
+			ext.bad_frames = TakeBadFrameCount();
 			ext.base.packet_header.crc = ComputeSendMessageCrc(ext);
 			ForwardToBluetooth(reinterpret_cast<const uint8_t*>(&ext), sizeof(ext));
 			break;
@@ -165,8 +167,21 @@ void Communication::ProcessRadioRx() {
 		// Suppress the red LED for a brief window after our own TX ends:
 		// the TX→RX radio transition can produce a spurious OnRxDone with
 		// a payload that fails our CRC, which is not a real receive error.
-		if (HAL_GetTick() - last_radio_tx_end_ms_ >= kPostTxRxGuardMs)
+		if (HAL_GetTick() - last_radio_tx_end_ms_ >= kPostTxRxGuardMs) {
 			RgbLed(RgbColor::Red, LedState::On);
+			// A frame arrived and did not survive (ADR-0019).  This is the most
+			// direct evidence of collision the system has, and it was previously
+			// lit on an LED and discarded.  It beats inferring from a gap: a gap
+			// might be a locator switched off, whereas a corrupted frame proves
+			// something transmitted and was destroyed.  Reaches us because the
+			// driver no longer drops hardware CRC mismatches (#16), so collision
+			// garbage lands here instead of vanishing inside radio_driver.c.
+			//
+			// Not counted during a survey: the radio is parked on other channels
+			// then, and failures there say nothing about the home channel.
+			if (!survey_active_ && bad_frame_count_ < UINT8_MAX)
+				bad_frame_count_++;
+		}
 	}
 	last_radio_rx_end_ms_ = HAL_GetTick();
 	radio_rx_led_status_serviced_ = false;
@@ -254,6 +269,12 @@ ParseResult Communication::ParseLoraFrame(const uint8_t *data, std::size_t len, 
 	default:
 		return ParseResult::UnknownType;
 	}
+}
+
+uint8_t Communication::TakeBadFrameCount() {
+	const uint8_t n = bad_frame_count_;
+	bad_frame_count_ = 0;
+	return n;
 }
 
 int16_t Communication::TakeNoiseFloor() {

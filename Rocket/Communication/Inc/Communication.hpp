@@ -192,6 +192,14 @@ private:
 	// Read the accumulated peak and start a fresh interval.
 	int16_t TakeNoiseFloor();
 
+	// Frames that arrived and failed to parse since the last broadcast (ADR-0019).
+	// Direct evidence of collision, and strictly better than inferring from a gap:
+	// a gap can mean a locator was switched off, a corrupted frame proves something
+	// transmitted and was destroyed.  Saturates rather than wrapping — "many" and
+	// "many more" call for the same response.
+	uint8_t bad_frame_count_ = 0;
+	uint8_t TakeBadFrameCount();
+
 	// ── Channel survey (ADR-0019 tier 3, #33) ─────────────────────────────────
 	//
 	// Sweeps channels 0..63 sampling the idle level on each, so the app can rank

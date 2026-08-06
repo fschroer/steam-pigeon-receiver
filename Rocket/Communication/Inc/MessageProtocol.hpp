@@ -135,6 +135,7 @@ struct PreLaunchMessageExtended {
 	// outside the authenticated region and auth_tag is unaffected.
 	int8_t  snr;            // LoRa SNR of this packet (dB); was measured and discarded before
 	int16_t noise_floor;    // peak idle-channel RSSI since the last report (dBm)
+	uint8_t bad_frames;     // frames that arrived and failed to parse since the last report
 };
 
 struct TelemetryData {
@@ -207,6 +208,7 @@ struct TelemetryMessageExtended {
 	// Link quality / interference (ADR-0019), as in PreLaunchMessageExtended.
 	int8_t  snr;            // LoRa SNR of this packet (dB)
 	int16_t noise_floor;    // peak idle-channel RSSI since the last report (dBm)
+	uint8_t bad_frames;     // frames that arrived and failed to parse since the last report
 };
 
 struct FlightMetadataRecord {
@@ -250,10 +252,10 @@ static_assert(sizeof(TelemetryData) ==  76, "TelemetryData size changed — sync
 // by hand-computed byte offsets — but nothing pinned their size until ADR-0019.
 // These are receiver-only (the locator never sees them), so the app's
 // WireLayoutTest is the only counterpart: app payload = sizeof(struct) − header(6).
-static_assert(sizeof(PreLaunchMessageExtended) == 143,
-		"PreLaunchMessageExtended size changed — sync the app's PRELAUNCH_MESSAGE_PAYLOAD_SIZE (137)");
-static_assert(sizeof(TelemetryMessageExtended) ==  81,
-		"TelemetryMessageExtended size changed — sync the app's TELEMETRY_MESSAGE_PAYLOAD_SIZE (75)");
+static_assert(sizeof(PreLaunchMessageExtended) == 144,
+		"PreLaunchMessageExtended size changed — sync the app's PRELAUNCH_MESSAGE_PAYLOAD_SIZE (138)");
+static_assert(sizeof(TelemetryMessageExtended) ==  82,
+		"TelemetryMessageExtended size changed — sync the app's TELEMETRY_MESSAGE_PAYLOAD_SIZE (76)");
 
 // Channel survey (ADR-0019 tier 3).  Receiver-only messages; the locator reserves
 // the MsgType values but never sends or parses these.
