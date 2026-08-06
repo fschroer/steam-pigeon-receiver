@@ -311,8 +311,22 @@ void Communication::ServiceNoiseFloor() {
 }
 
 void Communication::BeginChannelSurvey() {
-	if (survey_active_ || radio_ == nullptr)
+	// Every path out of here must queue a response.  Returning silently leaves the
+	// app waiting on a reply that will never come, which is indistinguishable from
+	// a receiver whose firmware does not support the survey at all.
+	if (radio_ == nullptr) {
+		survey_status_ = ChannelSurveyStatus::RefusedBusy;
+		survey_response_pending_ = true;
 		return;
+	}
+	if (survey_active_) {
+		// A sweep is already running; report rather than ignoring the request. The
+		// running sweep will answer separately, and a duplicate response is harmless
+		// because the app matches on arrival, not on request.
+		survey_status_ = ChannelSurveyStatus::RefusedBusy;
+		survey_response_pending_ = true;
+		return;
+	}
 	// Enforce the refusals here rather than trusting the app's gate, which is
 	// soft (ADR-0006).  A sweep is deaf to the locator for ~1 s: harmless on the
 	// ground, lost telemetry in flight — and the channel cannot be changed in
@@ -340,6 +354,8 @@ void Communication::BeginChannelSurvey() {
 		survey_level_[i] = 0;
 	SetChannel(survey_channel_);
 	survey_channel_start_ms_ = HAL_GetTick();
+	survey_start_ms_ = survey_channel_start_ms_;
+	survey_last_sample_ms_ = survey_channel_start_ms_;
 }
 
 void Communication::BeginSurveyConfirmPhase() {
@@ -425,12 +441,21 @@ void Communication::ServiceChannelSurvey() {
 		return;
 	}
 
+	const uint32_t now = HAL_GetTick();
+	// Backstop: whatever goes wrong, restore the radio and answer.  The app has no
+	// other way to learn a sweep died, and a silent receiver is the one failure it
+	// cannot tell apart from unsupported firmware.
+	if (now - survey_start_ms_ >= kSurveyDeadlineMs) {
+		survey_status_ = ChannelSurveyStatus::RefusedBusy;
+		FinishChannelSurvey();
+		return;
+	}
+
 	const uint32_t dwell =
 			(survey_phase_ == SurveyPhase::Coarse) ? kSurveyDwellMs : kSurveyConfirmDwellMs;
-	const uint32_t elapsed = HAL_GetTick() - survey_channel_start_ms_;
-	if (elapsed >= kSurveySettleMs) {
-		// Sample as fast as the loop allows rather than on a timer: bursty
-		// interference is exactly what a sparse sample set misses.
+	const uint32_t elapsed = now - survey_channel_start_ms_;
+	if (elapsed >= kSurveySettleMs && now - survey_last_sample_ms_ >= kSurveySampleIntervalMs) {
+		survey_last_sample_ms_ = now;
 		const int16_t rssi = radio_->Rssi();
 		if (survey_channel_peak_ == kNoiseFloorUnknown || rssi > survey_channel_peak_)
 			survey_channel_peak_ = rssi;

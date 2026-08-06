@@ -222,6 +222,16 @@ private:
 	// Must exceed the ~1 s broadcast period so at least one transmission is
 	// guaranteed to fall inside it, with margin for cadence jitter.
 	static constexpr uint32_t kSurveyConfirmDwellMs = 1200u;
+	// Throttle RSSI reads.  Sampling every main-loop pass was defensible at a 15 ms
+	// dwell (~1500 reads per channel); at 1200 ms it is ~120000 per channel and
+	// ~600000 per sweep, each one a SUBGHZ SPI transaction that polls the radio's
+	// BUSY line.  1 ms still gives ~1200 samples across a confirm dwell, far more
+	// than needed to catch a 138 ms burst.
+	static constexpr uint32_t kSurveySampleIntervalMs = 1u;
+	// Hard ceiling on a whole sweep.  Nominally ~7 s (0.8 s coarse + 5 x 1.2 s);
+	// this is the backstop that guarantees the app always gets an answer, so a
+	// sweep that stalls for any reason cannot leave it waiting forever.
+	static constexpr uint32_t kSurveyDeadlineMs = 12000u;
 	// Mirrors the PHY's RX_TIMEOUT_VALUE (subghz_phy_app.c).  Used only to re-arm
 	// RX after a sweep; if that constant changes, this must follow.
 	static constexpr uint32_t kRxTimeoutMs = 3000u;
@@ -240,6 +250,8 @@ private:
 	uint8_t  survey_confirm_channel_[kSurveyConfirmCount] = { };
 	uint8_t  survey_confirm_count_ = 0;    // how many made the shortlist
 	uint8_t  survey_confirm_index_ = 0;    // which of them is dwelling now
+	uint32_t survey_start_ms_ = 0;         // for kSurveyDeadlineMs
+	uint32_t survey_last_sample_ms_ = 0;
 
 	void BeginChannelSurvey();
 	void BeginSurveyConfirmPhase();  // shortlists the quietest coarse candidates
