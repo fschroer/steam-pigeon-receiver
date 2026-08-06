@@ -132,6 +132,9 @@ public:
 	// Call from the main loop: advances the channel survey one slice per call
 	// (ADR-0019 tier 3).  Never blocks for the whole sweep.
 	void ServiceChannelSurvey();
+	// Call from the main loop: reports bad frames to the console as they happen,
+	// independent of whether any broadcast is getting through (ADR-0019).
+	void ServiceBadFrameTrace();
 	void ServiceBleNameUpdate();
 	void QueueBleNameUpdate(const char* name);
 	void ServiceReceiverInfoResponse();
@@ -204,6 +207,16 @@ private:
 	// "many more" call for the same response.
 	uint8_t bad_frame_count_ = 0;
 	uint8_t TakeBadFrameCount();
+
+	// Free-running total, never reset, used only for the console trace.  The wire
+	// counter above is consumed when a broadcast is forwarded — which is exactly
+	// what stops happening during a heavy collision epoch, so tracing off it made
+	// the events invisible in the case that produces the most of them.  A separate
+	// total decouples "what did the radio see" from "did anything get through".
+	uint32_t bad_frames_total_ = 0;
+	uint32_t bad_frames_traced_ = 0;
+	uint32_t last_bad_frame_trace_ms_ = 0;
+	static constexpr uint32_t kBadFrameTraceIntervalMs = 1000u;
 
 	// ── Channel survey (ADR-0019 tier 3, #33) ─────────────────────────────────
 	//

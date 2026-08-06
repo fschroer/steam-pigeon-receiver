@@ -102,6 +102,7 @@ void Communication::OnRadioRxError() {
 		return;
 	if (bad_frame_count_ < UINT8_MAX)
 		bad_frame_count_++;
+	bad_frames_total_++;
 	RgbLed(RgbColor::Red, LedState::On);
 	last_radio_rx_end_ms_ = HAL_GetTick();
 	radio_rx_led_status_serviced_ = false;
@@ -186,6 +187,7 @@ void Communication::ProcessRadioRx() {
 		// a payload that fails our CRC, which is not a real receive error.
 		if (HAL_GetTick() - last_radio_tx_end_ms_ >= kPostTxRxGuardMs) {
 			RgbLed(RgbColor::Red, LedState::On);
+			bad_frames_total_++;
 			// A frame arrived and did not survive (ADR-0019).  This is the most
 			// direct evidence of collision the system has, and it was previously
 			// lit on an LED and discarded.  It beats inferring from a gap: a gap
@@ -291,11 +293,6 @@ ParseResult Communication::ParseLoraFrame(const uint8_t *data, std::size_t len, 
 uint8_t Communication::TakeBadFrameCount() {
 	const uint8_t n = bad_frame_count_;
 	bad_frame_count_ = 0;
-	// Console evidence, so "is the receiver seeing collisions at all?" is something
-	// you can read rather than infer.  Only on a non-zero count, so a healthy link
-	// stays silent; called from the main loop, not the radio callback.
-	if (n != 0)
-		SurveyTraceLine("bad frames", static_cast<int32_t>(n), 0);
 	return n;
 }
 
@@ -484,6 +481,23 @@ void Communication::FinishChannelSurvey() {
 	SurveyTraceLine("done status/ms", static_cast<int32_t>(survey_status_),
 			static_cast<int32_t>(HAL_GetTick() - survey_start_ms_));
 	SurveyTraceLine("restored channel", static_cast<int32_t>(survey_home_channel_), 0);
+}
+
+void Communication::ServiceBadFrameTrace() {
+	// One line per second while frames are failing, whether or not anything is
+	// getting through.  This is the console counterpart of the red LED: each red
+	// flash is one demodulated frame that did not survive, and during a collision
+	// epoch that is the only evidence the receiver has.
+	if (bad_frames_total_ == bad_frames_traced_)
+		return;
+	const uint32_t now = HAL_GetTick();
+	if (now - last_bad_frame_trace_ms_ < kBadFrameTraceIntervalMs)
+		return;
+	last_bad_frame_trace_ms_ = now;
+	SurveyTraceLine("bad frames since/total",
+			static_cast<int32_t>(bad_frames_total_ - bad_frames_traced_),
+			static_cast<int32_t>(bad_frames_total_));
+	bad_frames_traced_ = bad_frames_total_;
 }
 
 void Communication::ServiceChannelSurvey() {
