@@ -121,6 +121,7 @@ struct PreLaunchData {
 	uint16_t main_backup_deploy_altitude;
 	char device_name[device_name_length];
 	uint16_t battery_voltage_mvolt;
+	uint8_t armed;         // explicit arm state, 0/1 (ADR-0021 Decision 3, #35)
 	uint32_t locator_id;   // cleartext STM MPU UID; passes through untouched to the app
 	uint32_t auth_tag;     // password-seeded checksum; receiver never inspects it
 };
@@ -156,6 +157,10 @@ struct TelemetryData {
 	Vec3f vel_ned_mps;    // fused NED velocity (north, east, down) m/s
 	Quaternionf q_bn;     // body-to-NED attitude quaternion (w, x, y, z)
 	FlightStates flight_state;
+	// Explicit arm state (ADR-0021 Decision 3, #35).  The receiver reads this — it
+	// gates the channel survey on arm state — where it previously inferred from
+	// the message type.  Passes through to the app untouched.
+	uint8_t armed;         // 0 = disarmed, 1 = armed
 	uint32_t locator_id;   // cleartext STM MPU UID; passes through untouched to the app
 	uint32_t auth_tag;     // password-seeded checksum; receiver never inspects it
 };
@@ -257,17 +262,17 @@ static_assert(sizeof(FlightEventsMessage) == 66, "FlightEventsMessage size chang
 // failure looks like "the locator went out of range", which is the last thing
 // anyone debugs. Pinned here as the third copy of the layout; the locator
 // asserts the same numbers and the app's WireLayoutTest asserts the payloads.
-static_assert(sizeof(PreLaunchData) == 115, "PreLaunchData size changed — sync locator + app");
-static_assert(sizeof(TelemetryData) ==  76, "TelemetryData size changed — sync locator + app");
+static_assert(sizeof(PreLaunchData) == 116, "PreLaunchData size changed — sync locator + app");
+static_assert(sizeof(TelemetryData) ==  77, "TelemetryData size changed — sync locator + app");
 
 // The extended structs are what actually reach the app, and the app parses them
 // by hand-computed byte offsets — but nothing pinned their size until ADR-0019.
 // These are receiver-only (the locator never sees them), so the app's
 // WireLayoutTest is the only counterpart: app payload = sizeof(struct) − header(6).
-static_assert(sizeof(PreLaunchMessageExtended) == 144,
-		"PreLaunchMessageExtended size changed — sync the app's PRELAUNCH_MESSAGE_PAYLOAD_SIZE (138)");
-static_assert(sizeof(TelemetryMessageExtended) ==  82,
-		"TelemetryMessageExtended size changed — sync the app's TELEMETRY_MESSAGE_PAYLOAD_SIZE (76)");
+static_assert(sizeof(PreLaunchMessageExtended) == 145,
+		"PreLaunchMessageExtended size changed — sync the app's PRELAUNCH_MESSAGE_PAYLOAD_SIZE (139)");
+static_assert(sizeof(TelemetryMessageExtended) ==  83,
+		"TelemetryMessageExtended size changed — sync the app's TELEMETRY_MESSAGE_PAYLOAD_SIZE (77)");
 
 // Channel survey (ADR-0019 tier 3).  Receiver-only messages; the locator reserves
 // the MsgType values but never sends or parses these.

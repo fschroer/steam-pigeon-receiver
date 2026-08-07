@@ -137,7 +137,12 @@ void Communication::ProcessRadioRx() {
 			last_locator_periodic_rx_ms_ = HAL_GetTick();
 			locator_periodic_ever_rx_    = true;
 			locator_in_profile_mode_         = false;  // locator returned to Disarmed
-			locator_armed_                   = false;  // PreLaunchData ⇒ disarmed
+			locator_armed_                   = parsed.prelaunch.armed != 0;
+			// PreLaunchData carries no flight_state to read.  It is the on-pad
+			// message by construction — a locator that has left the pad sends
+			// TelemetryData, armed or not (#36) — so there is no in-flight case
+			// to miss here.
+			locator_in_flight_               = false;
 			PreLaunchMessageExtended ext { };
 			// Copy the original message
 			std::memcpy(&ext.base, &parsed.prelaunch, sizeof(PreLaunchData));
@@ -160,7 +165,13 @@ void Communication::ProcessRadioRx() {
 		case MsgType::TelemetryData: {
 			last_locator_periodic_rx_ms_ = HAL_GetTick();
 			locator_periodic_ever_rx_    = true;
-			locator_armed_               = true;   // TelemetryData ⇒ armed
+			// Read, not inferred (ADR-0021 Decision 3, #35).  These are two
+			// different questions and #36 splits them: a DISARMED locator
+			// broadcasts telemetry in flight, so "sent TelemetryData" stops
+			// meaning "armed" and the survey gate below needs both.
+			locator_armed_               = parsed.telemetry.armed != 0;
+			locator_in_flight_           = parsed.telemetry.flight_state != FlightStates::WaitingLaunch
+			                            && parsed.telemetry.flight_state != FlightStates::Landed;
 			TelemetryMessageExtended ext { };
 			std::memcpy(&ext.base, &parsed.telemetry, sizeof(TelemetryData));
 			ext.rssi = rssi_;
@@ -415,7 +426,7 @@ void Communication::BeginChannelSurvey() {
 	// soft (ADR-0006).  A sweep is deaf to the locator for ~1 s: harmless on the
 	// ground, lost telemetry in flight — and the channel cannot be changed in
 	// flight anyway, so the result would be unusable even if we took it.
-	if (locator_armed_) {
+	if (locator_armed_ || locator_in_flight_) {
 		survey_status_ = ChannelSurveyStatus::RefusedArmed;
 		survey_response_pending_ = true;
 		SurveyTraceLine("refused armed", 0, 0);
@@ -604,10 +615,12 @@ void Communication::ServiceChannelSurvey() {
 	if (!survey_active_ || radio_ == nullptr)
 		return;
 
-	// Abort rather than push on if the locator arms mid-sweep.  Arming is a
-	// deliberate act by someone standing at the pad; finishing the sweep would
-	// keep the receiver deaf through the first seconds of a live flight.
-	if (locator_armed_) {
+	// Abort rather than push on if the locator arms — or launches — mid-sweep.
+	// Arming is a deliberate act by someone standing at the pad; finishing the
+	// sweep would keep the receiver deaf through the first seconds of a live
+	// flight.  The launch half matters once a disarmed locator can fly (#36):
+	// there is no arm event to catch, so flight_state is the only signal.
+	if (locator_armed_ || locator_in_flight_) {
 		survey_status_ = ChannelSurveyStatus::RefusedArmed;
 		FinishChannelSurvey();
 		return;

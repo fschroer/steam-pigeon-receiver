@@ -330,11 +330,19 @@ private:
 	// FlightDataAck.  Cleared when PreLaunchData resumes (locator back to Disarmed).
 	bool     locator_in_profile_mode_ = false;
 
-	// True when the last periodic packet was TelemetryData rather than PreLaunchData,
-	// i.e. the locator is armed.  The app gates the survey too, but that gate is
-	// app-side and soft (ADR-0006); this one is the enforcement that actually
-	// protects flight telemetry from a sweep.
+	// Arm state as the locator STATES it (ADR-0021 Decision 3, #35), not as
+	// inferred from which periodic message arrived — the inference this replaces.
+	// The app gates the survey too, but that gate is app-side and soft
+	// (ADR-0006); this one is the enforcement that actually protects flight
+	// telemetry from a sweep.
 	bool     locator_armed_ = false;
+	// Whether the locator has left the pad and not yet landed, read from the
+	// telemetry flight_state.  Tracked SEPARATELY from locator_armed_ because
+	// #36 decouples them: once arming gates pyro only, a disarmed locator flies
+	// and broadcasts, and gating the survey on arm state alone would let a sweep
+	// run mid-flight — deaf for ~1 s over a live flight, the exact failure the
+	// gate exists to prevent.  Until #36 lands the two always agree.
+	bool     locator_in_flight_ = false;
 	// Timestamp of the last received FlightData or FlightDataParity packet.
 	// Used to detect when the locator's burst has ended (no new packet for
 	// kAckDeferMs ms) so the cumulative ACK can be safely forwarded.
