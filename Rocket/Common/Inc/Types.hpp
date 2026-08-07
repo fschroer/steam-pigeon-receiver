@@ -21,6 +21,19 @@ enum class UnitSystem : uint8_t {
     English
 };
 
+// Which raw sensor axis points toward the rocket's nose (ADR-0021 Decision 6,
+// #36).  Locator configuration; the receiver only relays it and never acts on
+// it.  Mirrors the locator's copy — keep the values in sync.
+enum class NoseAxis : uint8_t {
+    Auto = 0,   // locator detects the gravity axis on each arm (pre-#36 behaviour)
+    XPlus,      // sensor +X toward the nose (the identity mounting frame)
+    XMinus,
+    YPlus,
+    YMinus,
+    ZPlus,
+    ZMinus
+};
+
 enum class SensorHealth : uint8_t {
     Off = 0,
     Initializing,

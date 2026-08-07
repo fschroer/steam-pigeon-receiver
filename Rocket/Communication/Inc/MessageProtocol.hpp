@@ -121,6 +121,7 @@ struct PreLaunchData {
 	uint16_t main_backup_deploy_altitude;
 	char device_name[device_name_length];
 	uint16_t battery_voltage_mvolt;
+	NoseAxis nose_axis;    // locator mounting config (ADR-0021 Decision 6, #36)
 	uint8_t armed;         // explicit arm state, 0/1 (ADR-0021 Decision 3, #35)
 	uint32_t locator_id;   // cleartext STM MPU UID; passes through untouched to the app
 	uint32_t auth_tag;     // password-seeded checksum; receiver never inspects it
@@ -262,15 +263,15 @@ static_assert(sizeof(FlightEventsMessage) == 66, "FlightEventsMessage size chang
 // failure looks like "the locator went out of range", which is the last thing
 // anyone debugs. Pinned here as the third copy of the layout; the locator
 // asserts the same numbers and the app's WireLayoutTest asserts the payloads.
-static_assert(sizeof(PreLaunchData) == 116, "PreLaunchData size changed — sync locator + app");
+static_assert(sizeof(PreLaunchData) == 117, "PreLaunchData size changed — sync locator + app");
 static_assert(sizeof(TelemetryData) ==  77, "TelemetryData size changed — sync locator + app");
 
 // The extended structs are what actually reach the app, and the app parses them
 // by hand-computed byte offsets — but nothing pinned their size until ADR-0019.
 // These are receiver-only (the locator never sees them), so the app's
 // WireLayoutTest is the only counterpart: app payload = sizeof(struct) − header(6).
-static_assert(sizeof(PreLaunchMessageExtended) == 145,
-		"PreLaunchMessageExtended size changed — sync the app's PRELAUNCH_MESSAGE_PAYLOAD_SIZE (139)");
+static_assert(sizeof(PreLaunchMessageExtended) == 146,
+		"PreLaunchMessageExtended size changed — sync the app's PRELAUNCH_MESSAGE_PAYLOAD_SIZE (140)");
 static_assert(sizeof(TelemetryMessageExtended) ==  83,
 		"TelemetryMessageExtended size changed — sync the app's TELEMETRY_MESSAGE_PAYLOAD_SIZE (77)");
 
@@ -356,6 +357,14 @@ struct LocatorRocketSettings {
 	uint8_t lora_channel;
 
 	char device_name[device_name_length] = { 0 };
+
+	// Which raw sensor axis points at the rocket's nose (ADR-0021 Decision 6,
+	// #36).  Relayed through untouched — the receiver never interprets it.
+	// Appended AFTER device_name so every existing field keeps its offset, which
+	// matters here: ProcessAppMessage reads the relayed lora_channel by
+	// offsetof(LocatorRocketSettings, lora_channel) to follow a locator channel
+	// change (ADR-0011), and that offset is unchanged by this.
+	NoseAxis nose_axis = NoseAxis::Auto;
 };
 
 struct ReceiverSettings {
@@ -373,5 +382,13 @@ struct ReceiverInfoMessage {
 };
 
 #pragma pack(pop)
+
+// The relayed locator config, length-validated on receive like the broadcasts
+// above (message_length_ = sizeof(LocatorRocketSettings) - header).  Nothing
+// pinned it until #36, so a drift from the locator's LocatorSettings silently
+// dropped every config change the app sent — a failure indistinguishable from
+// the command never arriving.  The locator asserts the same 45.
+static_assert(sizeof(LocatorRocketSettings) == 45,
+		"LocatorRocketSettings size changed — sync locator LocatorSettings + app");
 
 } // namespace Communication
