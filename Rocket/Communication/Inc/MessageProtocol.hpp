@@ -38,7 +38,8 @@ enum class MsgType : uint8_t {
 	VersionInfo = 18,           // Response: locator version forwarded through receiver, which appends its own version.
 	FlightEvents = 19,          // Per-record flight event summary sent alongside a FlightData transfer.
 	ChannelSurveyRequest = 20,  // Request from the app to the receiver to sweep the band (no locator involved).
-	ChannelSurvey = 21          // Response from the receiver with per-channel occupancy.
+	ChannelSurvey = 21,         // Response from the receiver with per-channel occupancy.
+	PadAlertSnoozeRequest = 22  // App→locator: suppress the prepped-and-disarmed alert for N minutes (#37).
 };
 
 // Flight event summary indices — wire order of FlightEventsMessage::event_timestamp_ms.

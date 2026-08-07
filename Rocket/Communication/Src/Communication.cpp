@@ -846,6 +846,9 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 		case MsgType::DeploymentTestRequest:
 			message_length_ = sizeof(TargetedRequest) - sizeof(PacketHeader) + 1;  // + channel
 			break;
+		case MsgType::PadAlertSnoozeRequest:
+			message_length_ = sizeof(TargetedRequest) - sizeof(PacketHeader) + 1;  // + minutes (#37)
+			break;
 		case MsgType::ReceiverInfoRequest:
 			message_length_ = 0;
 			break;
