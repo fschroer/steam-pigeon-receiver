@@ -123,6 +123,7 @@ struct PreLaunchData {
 	uint16_t battery_voltage_mvolt;
 	NoseAxis nose_axis;    // locator mounting config (ADR-0021 Decision 6, #36)
 	uint8_t armed;         // explicit arm state, 0/1 (ADR-0021 Decision 3, #35)
+	uint8_t pad_alert;     // prepped rocket standing disarmed (ADR-0021 Decision 5, #37)
 	uint32_t locator_id;   // cleartext STM MPU UID; passes through untouched to the app
 	uint32_t auth_tag;     // password-seeded checksum; receiver never inspects it
 };
@@ -263,15 +264,15 @@ static_assert(sizeof(FlightEventsMessage) == 66, "FlightEventsMessage size chang
 // failure looks like "the locator went out of range", which is the last thing
 // anyone debugs. Pinned here as the third copy of the layout; the locator
 // asserts the same numbers and the app's WireLayoutTest asserts the payloads.
-static_assert(sizeof(PreLaunchData) == 117, "PreLaunchData size changed — sync locator + app");
+static_assert(sizeof(PreLaunchData) == 118, "PreLaunchData size changed — sync locator + app");
 static_assert(sizeof(TelemetryData) ==  77, "TelemetryData size changed — sync locator + app");
 
 // The extended structs are what actually reach the app, and the app parses them
 // by hand-computed byte offsets — but nothing pinned their size until ADR-0019.
 // These are receiver-only (the locator never sees them), so the app's
 // WireLayoutTest is the only counterpart: app payload = sizeof(struct) − header(6).
-static_assert(sizeof(PreLaunchMessageExtended) == 146,
-		"PreLaunchMessageExtended size changed — sync the app's PRELAUNCH_MESSAGE_PAYLOAD_SIZE (140)");
+static_assert(sizeof(PreLaunchMessageExtended) == 147,
+		"PreLaunchMessageExtended size changed — sync the app's PRELAUNCH_MESSAGE_PAYLOAD_SIZE (141)");
 static_assert(sizeof(TelemetryMessageExtended) ==  83,
 		"TelemetryMessageExtended size changed — sync the app's TELEMETRY_MESSAGE_PAYLOAD_SIZE (77)");
 
