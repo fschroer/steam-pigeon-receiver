@@ -22,10 +22,20 @@ struct RocketPersistentSettings
     char device_name[device_name_length] = {0};
 };
 
+// Layout-sensitive: this is the payload of the RuntimeMetadataStore journal,
+// whose entry header carries a magic and a CRC but NO version or size field.
+// Any change to the layout therefore re-defaults the journal once on the next
+// flash — here that costs only boot_count, the sole field anything reads.
 struct RocketRuntimeMetadata
 {
-    uint8_t archive_position = 0;
+    // NOTE: an `archive_position` field led this struct until 2026-08-07.  It
+    // was never read AND never written on the receiver — a straight copy of the
+    // locator's, where it held (last_closed_record_id + 1), i.e. the NEXT slot
+    // to write rather than the record just written.  Removed on both sides
+    // together: beside last_closed_record_id, the name invited an off-by-one.
     uint32_t boot_count = 0;
+    // Unused on the receiver so far; kept because the layout cost of removing
+    // them is the same re-default as above and they mirror the locator's.
     uint32_t last_flight_sequence = 0;
     uint32_t last_closed_record_id = 0;
 };
