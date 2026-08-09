@@ -255,7 +255,7 @@ private:
 	//
 	// 7 is co-prime with 64, so visits 0..63 still cover every channel exactly
 	// once, but a single burst now smears across channels ~7 apart instead of
-	// neighbours. The time artifact remains; it just stops correlating with
+	// neighbors. The time artifact remains; it just stops correlating with
 	// frequency, so the shortlist is no longer drawn from one accidental region.
 	static constexpr uint8_t  kSurveyCoarseStride = 7u;
 	// Must exceed the ~1 s broadcast period so at least one transmission is

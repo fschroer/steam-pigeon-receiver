@@ -43,7 +43,7 @@ private:
 	const char *bs_ = "\b \b\0";
 	const char *config_menu_intro_ = "Rocket Receiver Configuration\r\n\0";
 	const char *config_save_text_ = "Saved Configuration\r\n\r\n\0";
-	const char *cancel_text_ = "Cancelled\r\n\r\n\0";
+	const char *cancel_text_ = "Canceled\r\n\r\n\0";
 	const char *lora_channel_text_ = "0) Lora Channel (0-63):\t\t\t\0";
 	const char *device_name_text_ = "1) Device Name:\t\t\t\t\0";
 	const char *num_edit_guidance_text_ = "[ = down, ] = up. Hit Enter to update, Esc to cancel.\r\n\0";

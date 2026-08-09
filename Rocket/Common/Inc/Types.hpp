@@ -26,7 +26,7 @@ enum class UnitSystem : uint8_t {
 // it is from gravity.  Locator configuration; the receiver only relays it and
 // never acts on it.  Mirrors the locator's copy — keep the values in sync.
 enum class NoseAxis : uint8_t {
-    Auto = 0,   // locator detects the gravity axis on each arm (pre-#36 behaviour)
+    Auto = 0,   // locator detects the gravity axis on each arm (pre-#36 behavior)
     X,          // the rocket's long axis lies along the sensor X axis
     Y,
     Z

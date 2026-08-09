@@ -29,7 +29,7 @@ enum class MsgType : uint8_t {
 	FlightDataRequest = 9, // Request from the app, via the receiver, for the data in one flight profile.
 	FlightData = 10, // Flight profile data response from the locator to the app via the receiver consisting of multiple packets, which the app acknowledges via the receiver.
 	FlightDataParity = 11, // Parity packet to allow the app to reconstruct profile data if one packet is lost.
-	FlightDataAck = 12, // Profile data acknowledgement sent from the app via the receiver.
+	FlightDataAck = 12, // Profile data acknowledgment sent from the app via the receiver.
 	DeploymentTestRequest = 13, // Request from the app, via the receiver, for the locator to execute a deployment test.
 	DeploymentTest = 14,        // Deployment test countdown sent from the locator to the app via the receiver.
 	ReceiverInfoRequest = 15,   // Request from the app to the receiver for its current channel and name (no locator needed).

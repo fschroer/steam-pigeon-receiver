@@ -477,7 +477,7 @@ void Communication::BeginSurveyConfirmPhase() {
 	// It also gives the frame counter deterministic coverage. Our own locator
 	// transmits here, so every sweep exercises the decode path on a channel known
 	// to be occupied, instead of waiting for a coarse miss to coincide with a
-	// favourable tie-break.
+	// favorable tie-break.
 	if (survey_home_channel_ < kSurveyChannelCount) {
 		taken[survey_home_channel_] = true;
 		survey_confirm_channel_[survey_confirm_count_++] = survey_home_channel_;
@@ -510,7 +510,7 @@ void Communication::BeginSurveyConfirmPhase() {
 		// (its own locator's burst was missed) and sat eleventh in the tie list.
 		//
 		// Deterministic, so repeat sweeps still agree: the first pick is the
-		// lowest-numbered minimum, and each later pick maximises its distance from
+		// lowest-numbered minimum, and each later pick maximizes its distance from
 		// the ones already taken.
 		uint8_t best = kSurveyChannelCount;
 		uint8_t best_spread = 0;
