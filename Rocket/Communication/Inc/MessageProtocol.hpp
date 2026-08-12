@@ -381,6 +381,22 @@ struct ReceiverInfoMessage {
 	PacketHeader header;
 	uint8_t      lora_channel = 0;
 	char         device_name[device_name_length] = { 0 };
+	// Channel status, carried here because this is the ONLY message the receiver
+	// sends with no locator involved.
+	//
+	// ServiceNoiseFloor() already keeps sampling once a broadcast is overdue —
+	// that is the whole point of the overdue branch — but until now the reading
+	// had nowhere to go: both carriers are locator broadcasts, so the measurement
+	// taken during silence could only be delivered by the packet whose absence
+	// prompted it.  The app was left extrapolating from the last sample before the
+	// locator went quiet, and reported "interference" on a channel that had simply
+	// gone still.  Same fields, same units, same drain-on-read semantics as the
+	// extended broadcasts above.
+	//
+	// INT16_MIN spelled out because Communication::kNoiseFloorUnknown is declared
+	// in the header that includes THIS one. Same value, and the app pins it too.
+	int16_t      noise_floor = INT16_MIN;
+	uint8_t      bad_frames = 0;
 };
 
 #pragma pack(pop)
@@ -392,5 +408,13 @@ struct ReceiverInfoMessage {
 // the command never arriving.  The locator asserts the same 45.
 static_assert(sizeof(LocatorRocketSettings) == 45,
 		"LocatorRocketSettings size changed — sync locator LocatorSettings + app");
+
+// Receiver-only, but the app frames it by exact length before the CRC is checked,
+// so a drift here desynchronises the framer rather than failing a check: the app
+// waits for bytes that never arrive, the health probe goes unanswered, and the
+// watchdog declares a phantom connection and reconnects forever.  Pinned by the
+// app's WireLayoutTest at payload 24 (= 30 - 6 header).
+static_assert(sizeof(ReceiverInfoMessage) == 30,
+		"ReceiverInfoMessage size changed — sync app RECEIVER_INFO_PAYLOAD_SIZE");
 
 } // namespace Communication

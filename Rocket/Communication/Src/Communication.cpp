@@ -798,6 +798,26 @@ void Communication::ServiceReceiverInfoResponse() {
 	msg.lora_channel = settings.lora_channel;
 	std::memcpy(msg.device_name, settings.device_name, device_name_length);
 
+	// Drain the same accumulators the extended broadcasts drain, with the same
+	// "peak/count since the last report" meaning.  Sharing them is deliberate: a
+	// sample must be reported exactly once, whichever message happens to carry it,
+	// or a quiet interval could be described twice and a busy one averaged away.
+	//
+	// The cost of that sharing is that every reader SHORTENS the window the next
+	// reader reports on, and a peak over a shorter window is never higher than one
+	// over a longer window.  So a poll competing with live broadcasts would bias
+	// the whole measurement downward, and the app's quietest-floor baseline keeps
+	// the minimum of what it sees — it would drift down and make the relative
+	// interference test creep toward firing on its own.
+	//
+	// That is why the app holds this poll back until the locator has been unheard
+	// for several seconds (RocketViewModel.CHANNEL_WATCH_SILENCE_MS), rather than
+	// starting at the first missed broadcast: a distant rocket routinely drops one
+	// or two, and while it is still transmitting the surviving packets carry the
+	// floor anyway.  By the time this poll runs, nothing is competing to drain.
+	msg.noise_floor = TakeNoiseFloor();
+	msg.bad_frames  = TakeBadFrameCount();
+
 	msg.header.crc = ComputeMessageCrc(msg);
 	ForwardToBluetooth(reinterpret_cast<const uint8_t*>(&msg), sizeof(msg));
 }
