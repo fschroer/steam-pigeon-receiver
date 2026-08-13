@@ -265,7 +265,18 @@ void HAL_UART_RxCpltCallback(UART_HandleTypeDef *huart)
 }
 
 /* USER CODE BEGIN EF */
+/* Overrides the weak no-op in Rocket/Common/Src/ConsoleBaud.cpp.
 
+   The console baud setting re-inits USART2 whenever the rate changes, and
+   HAL_UART_Init cancels the single-byte receive this file depends on: RxState
+   returns to READY and RxISR is cleared, so HAL_UART_RxCpltCallback below never
+   fires again -- and it is the only thing that re-arms the receive. Console
+   input therefore went deaf on the first rate change, which also left the
+   sync-byte recovery with nothing to listen to. */
+void ConsoleBaud_OnUartReinit(void)
+{
+  HAL_UART_Receive_IT(&huart2, &charRx, 1);
+}
 /* USER CODE END EF */
 
 /* Private Functions Definition -----------------------------------------------*/

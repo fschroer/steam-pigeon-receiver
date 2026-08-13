@@ -94,7 +94,14 @@ void UserInteraction::ProcessChar(uint8_t uart_char, DeviceState &device_state) 
 		case 'b': // b = Edit console baud (stored locally; never sent over the air)
 		case 'B':
 			user_interaction_state_ = UserInteractionState::EditConsoleBaud;
-			export_line.WriteMany(console_baud_edit_text_, num_edit_guidance_text_);
+			// Two writes, not one.  The help text alone is 267 characters against a
+			// 255-byte line buffer, and AppendMany discards the overflow SILENTLY —
+			// which truncated this screen mid-word at "...until this me".  Each
+			// WriteMany clears and flushes, so splitting bounds each by itself.
+			export_line.WriteMany(console_baud_edit_text_);
+			// Current rate after the guidance, so the [ / ] display has somewhere to
+			// land and the operator can see what they are changing from.
+			export_line.WriteMany(num_edit_guidance_text_, ConsoleBaudRates::kStandardRates[console_baud_index_]);
 			break;
 		}
 		break;
