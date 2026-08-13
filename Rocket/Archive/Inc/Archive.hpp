@@ -20,6 +20,12 @@ public:
 	RocketPersistentSettings& GetReceiverSettings() { return receiver_settings_; }
 	const RocketPersistentSettings& GetReceiverSettings() const { return receiver_settings_; }
 	bool SaveReceiverSettings(RocketPersistentSettings& receiver_settings_);
+	// UART console baud rate, kept in the runtime metadata journal rather than the
+	// settings journal — see the note on RocketRuntimeMetadata::console_baud.
+	// Returns the fallback when nothing valid is stored; SetConsoleBaud rejects
+	// anything outside ConsoleBaudRates.
+	uint32_t GetConsoleBaud() const;
+	bool SetConsoleBaud(uint32_t baud);
 private:
 	static PersistentSettingsStore::Config MakePersistentStore();
 	static RuntimeMetadataStore::Config MakeRuntimeStore();

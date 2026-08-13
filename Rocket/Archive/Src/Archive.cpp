@@ -1,4 +1,5 @@
 #include "Archive.hpp"
+#include "ConsoleBaudRates.hpp"
 #include "CompactSettingsJournal.hpp"
 #include "Format.hpp"
 
@@ -54,5 +55,17 @@ bool Archive::Init() {
 bool Archive::SaveReceiverSettings(RocketPersistentSettings& receiver_settings) {
 	receiver_settings_ = receiver_settings;
 	return persistentStore_.SaveIfChanged(receiver_settings, settings_saved_);
+}
+
+uint32_t Archive::GetConsoleBaud() const {
+	return ConsoleBaudRates::IsStandardRate(runtime_.console_baud) ? runtime_.console_baud
+			: ConsoleBaudRates::kFallbackRate;
+}
+
+bool Archive::SetConsoleBaud(uint32_t baud) {
+	if (!ConsoleBaudRates::IsStandardRate(baud))
+		return false;
+	runtime_.console_baud = baud;
+	return runtimeStore_.SaveIfChanged(runtime_, runtime_saved_);
 }
 

@@ -14,6 +14,7 @@ extern "C" {
 #include "MX25L4006E.hpp"
 #include "PowerManagement.hpp"
 #include "StRadioAdapter.hpp"
+#include "ConsoleBaud.hpp"
 
 enum FlightProfileState {
 	kIdle = 0, kMetadataRequested = 1
@@ -33,8 +34,21 @@ public:
 	void OnRadioRxError();
 	void ProcessRadioRx();
 	void OnUART1Char(uint8_t uart_char);
-	void OnUART2Char(uint8_t uart_char);
+	void OnUART2Char(uint8_t uart_char);   // ISR context: enqueue only
 private:
+	// Console (UART2) input is queued by the RX callback and handled from
+	// Service(), not in ISR context.  Adopting a detected baud rate re-inits the
+	// USART, which cannot be done from inside that peripheral's own interrupt
+	// without dropping the byte being serviced.
+	void ServiceConsole();
+	// Runs the sync-byte verify timeout and persists a detection once it commits.
+	void ServiceConsoleBaud();
+
+	static constexpr uint16_t kUart2RxBufSize = 128;  // power of two
+	volatile uint8_t uart2_rx_buf_[kUart2RxBufSize] = { };
+	volatile uint16_t uart2_rx_head_ = 0;  // producer: UART2 RX callback
+	volatile uint16_t uart2_rx_tail_ = 0;  // consumer: Service()
+
 	UART_HandleTypeDef &huart1_;
 	UART_HandleTypeDef &huart2_;
 	SPI_HandleTypeDef &hspi2_;
@@ -45,6 +59,9 @@ private:
 	Communication::Communication comm_;
 	MX25L4006E flash_;
 	Archive archive_;
+	// Declared ahead of config_ so it is constructed first: UserInteraction takes
+	// a reference to it.
+	ConsoleBaud console_baud_;
 	UserInteraction config_;
 	PowerManagement power_;
 	StRadioAdapter *radio_adapter_ = nullptr;

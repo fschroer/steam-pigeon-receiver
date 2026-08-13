@@ -38,6 +38,14 @@ struct RocketRuntimeMetadata
     // them is the same re-default as above and they mirror the locator's.
     uint32_t last_flight_sequence = 0;
     uint32_t last_closed_record_id = 0;
+    // UART console baud rate.  Here rather than in RocketPersistentSettings
+    // because that struct is the payload of the over-the-air LocatorSettings
+    // message on the locator side, and keeping the two structs' roles aligned
+    // across the pair is worth more than the byte it would save.  A console rate
+    // is a host-link setting in any case, not something the radio has business
+    // carrying.  Always one of ConsoleBaudRates::kStandardRates; 0 means "never
+    // set", which resolves to ConsoleBaudRates::kFallbackRate at load.
+    uint32_t console_baud = 0;
 };
 
 #pragma pack(pop)

@@ -17,8 +17,15 @@ constexpr uint16_t max_main_backup_deploy_altitude = 400;
 constexpr uint16_t max_lora_channel = 63;
 
 UserInteraction::UserInteraction(Communication::Communication &comm, Archive &archive,
-		UART_HandleTypeDef &huart2) :
-		comm_(comm), archive_(archive), huart2_(huart2) {
+		UART_HandleTypeDef &huart2, ConsoleBaud &console_baud) :
+		comm_(comm), archive_(archive), huart2_(huart2), console_baud_(console_baud) {
+}
+
+int UserInteraction::ConsoleBaudIndexOf(uint32_t rate) {
+	for (std::size_t i = 0; i < ConsoleBaudRates::kStandardRateCount; i++)
+		if (ConsoleBaudRates::kStandardRates[i] == rate)
+			return static_cast<int>(i);
+	return static_cast<int>(ConsoleBaudRates::kStandardRateCount) - 1;  // kFallbackRate is the last entry
 }
 
 void UserInteraction::ProcessChar(uint8_t uart_char, DeviceState &device_state) {
@@ -40,6 +47,10 @@ void UserInteraction::ProcessChar(uint8_t uart_char, DeviceState &device_state) 
 					lora_channel_ = receiver_settings.lora_channel;
 					std::memcpy(device_name_, receiver_settings.device_name, device_name_length);
 					device_name_[device_name_length] = 0; // null-terminate local buffer
+					// Seeded from the live rate, not from flash: after a sync-byte
+					// recovery those differ until the detection is saved, and the
+					// menu must show what the operator is actually connected at.
+					console_baud_index_ = ConsoleBaudIndexOf(console_baud_.CurrentRate());
 					DisplayConfigSettingsMenu();
 				} else if (std::memcmp(user_input_, dfu_command_, char_pos) == 0) {
 					device_state = DeviceState::Config;
@@ -80,6 +91,11 @@ void UserInteraction::ProcessChar(uint8_t uart_char, DeviceState &device_state) 
 			user_interaction_state_ = UserInteractionState::EditDeviceName;
 			export_line.WriteMany(text_edit_guidance_text_);
 			break;
+		case 'b': // b = Edit console baud (stored locally; never sent over the air)
+		case 'B':
+			user_interaction_state_ = UserInteractionState::EditConsoleBaud;
+			export_line.WriteMany(console_baud_edit_text_, num_edit_guidance_text_);
+			break;
 		}
 		break;
 	case UserInteractionState::EditLoraChannel:
@@ -87,6 +103,9 @@ void UserInteraction::ProcessChar(uint8_t uart_char, DeviceState &device_state) 
 		break;
 	case UserInteractionState::EditDeviceName:
 		AdjustConfigTextSetting(uart_char, device_name_);
+		break;
+	case UserInteractionState::EditConsoleBaud:
+		AdjustConsoleBaudSetting(uart_char);
 		break;
 	case UserInteractionState::DfuHome:
 		if (uart_char == 13) // Enter key
@@ -104,8 +123,52 @@ void UserInteraction::DisplayConfigSettingsMenu() {
 	StaticStringWriter<UART_LINE_MAX_LENGTH> export_line(&huart2_);
 	export_line.WriteMany(clear_screen_, config_menu_intro_, crlf_);
 	export_line.WriteMany(lora_channel_text_, lora_channel_, crlf_);
-	export_line.WriteMany(device_name_text_, device_name_);
+	export_line.WriteMany(device_name_text_, device_name_, crlf_);
+	export_line.WriteMany(console_baud_text_, ConsoleBaudRates::kStandardRates[console_baud_index_]);
 	export_line.WriteMany(crlf_, crlf_);
+}
+
+void UserInteraction::AdjustConsoleBaudSetting(uint8_t uart_char) {
+	StaticStringWriter<UART_LINE_MAX_LENGTH> export_line(&huart2_);
+	switch (uart_char) {
+	case 13: { // Enter key — apply and persist
+		const uint32_t rate = ConsoleBaudRates::kStandardRates[console_baud_index_];
+		// Persist BEFORE switching the line.  If the operator has the rate wrong
+		// they are about to stop being able to read anything, and a rate that was
+		// applied but never stored would come back as the old one after a reset —
+		// which sounds like a mercy, but it would also silently undo a sync-byte
+		// recovery the moment the device was power-cycled.
+		const bool saved = archive_.SetConsoleBaud(rate);
+		// Emitted at the OLD rate, while the operator can still read it.
+		if (saved)
+			export_line.WriteMany(crlf_, "Console baud set to ", rate, " - switch your terminal now.", crlf_);
+		else
+			export_line.WriteMany(crlf_, "Console baud NOT saved - rate unchanged.", crlf_);
+		if (saved)
+			console_baud_.SetRate(rate);
+		user_interaction_state_ = UserInteractionState::ConfigHome;
+		DisplayConfigSettingsMenu();
+		break;
+	}
+	case 27: // Esc key
+		console_baud_index_ = ConsoleBaudIndexOf(console_baud_.CurrentRate());
+		user_interaction_state_ = UserInteractionState::ConfigHome;
+		DisplayConfigSettingsMenu();
+		break;
+	case 91: // [ = next rate down
+		if (console_baud_index_ > 0)
+			console_baud_index_--;
+		break;
+	case 93: // ] = next rate up
+		if (console_baud_index_ < static_cast<int>(ConsoleBaudRates::kStandardRateCount) - 1)
+			console_baud_index_++;
+		break;
+	}
+	if (uart_char == 91 || uart_char == 93) {
+		// Trailing blanks cover the digits of a wider rate when stepping down, so
+		// 921600 -> 9600 does not read as "9600 0".
+		export_line.WriteMany(cr_, ConsoleBaudRates::kStandardRates[console_baud_index_], "   ");
+	}
 }
 
 void UserInteraction::AdjustConfigNumericSetting(uint8_t uart_char, uint32_t *config_mode_setting, uint32_t max_setting_value,
