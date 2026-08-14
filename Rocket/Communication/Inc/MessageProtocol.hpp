@@ -259,6 +259,15 @@ struct FlightEventsMessage {
 // drop every FlightEvents frame.  Pin it (the locator asserts the same 66).
 static_assert(sizeof(FlightEventsMessage) == 66, "FlightEventsMessage size changed — sync locator + app");
 
+// Same hazard, and it had no guard until the locator's record_count changed
+// underneath it (locator #38).  FlightMetadata is sized by record_count, so a
+// drift here drops every flight-list response silently — decode_into() compares
+// lengths with strict equality and ProcessRadioRx only forwards on Ok.
+// 96 = header 6 + 9 records x 10.  The locator asserts the same 96; the app
+// asserts the 90-byte payload in WireLayoutTest.
+static_assert(sizeof(FlightMetadataRecord) == 10, "FlightMetadataRecord size changed — sync locator + app");
+static_assert(sizeof(FlightMetadata) == 96, "FlightMetadata size changed — sync locator record_count + app");
+
 // The two unsolicited broadcasts are length-validated on receive and mirrored
 // byte-for-byte into the extended structs forwarded to the app, so a drift from
 // the locator's copy silently drops every frame of the type that drifted — the

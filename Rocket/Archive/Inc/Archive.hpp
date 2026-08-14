@@ -5,7 +5,18 @@
 #include "SystemFlashLayout.hpp"
 #include "DeviceUID.hpp"
 
-constexpr uint8_t record_count = 10;
+// MUST equal the locator's record_count.  It is not used for storage here — the
+// receiver has no flight archive — it exists solely to size FlightMetadata,
+// which carries one FlightMetadataRecord per locator archive slot.
+//
+// 9 since the locator's ARCHIVE_VERSION 6 (locator #38): FlightSample grew
+// 80 -> 88 B and ten records no longer fit its flash region.  Getting this
+// wrong does not fail gracefully: decode_into() length-checks with strict
+// equality, so a mismatch makes ProcessRadioRx drop every FlightMetadata
+// frame as a bad frame and never forward it — the app then shows an empty
+// flight list, which reads as a connection problem rather than a version
+// mismatch.  The static_assert in MessageProtocol.hpp pins the resulting size.
+constexpr uint8_t record_count = 9;
 
 using PersistentSettingsStore = SettingsStorage::CompactSettingsJournal<RocketPersistentSettings>;
 using RuntimeMetadataStore    = SettingsStorage::CompactSettingsJournal<RocketRuntimeMetadata>;
