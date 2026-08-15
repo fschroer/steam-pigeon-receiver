@@ -193,6 +193,37 @@ void Communication::ProcessRadioRx() {
 			ForwardToBluetooth(reinterpret_cast<const uint8_t*>(&ext), sizeof(ext));
 			break;
 		}
+		case MsgType::DeploymentTest: {
+			// The countdown IS the locator's periodic transmission while a
+			// deployment test runs.  In DeviceState::Test it sends this and
+			// nothing else — PreLaunchData and TelemetryData both stop, because
+			// both live in the Disarmed/Armed branch of its per-state switch.
+			//
+			// Without this the safe-window reference below freezes at the last
+			// PreLaunchData heard BEFORE the test began, the window shuts ~700 ms
+			// in and never reopens, and every app→locator command queued for the
+			// rest of the test sits in pending_tx_ undelivered.  The one that
+			// matters is the CANCEL: the operator presses stop, the receiver
+			// silently holds the frame, and the charge fires on schedule.
+			//
+			// This is the same failure the flight-profile branch below already
+			// fixes for metadata and data bursts ("a PreLaunchData window that
+			// never opens while the locator is quiet").  The deployment test is
+			// the third mode where the locator stops sending PreLaunchData, and
+			// it was the one still unhandled.
+			//
+			// Treated as a timing reference rather than by setting
+			// locator_in_profile_mode_: this message keeps the same ~1 Hz cadence
+			// out of the same super-loop as PreLaunchData, so it is an equally
+			// good collision-avoidance reference and the existing window offsets
+			// apply unchanged.  Profile mode means the locator has gone QUIET and
+			// forwarding is unconstrained — which is not true here, and would put
+			// our transmission on top of the next countdown.
+			last_locator_periodic_rx_ms_ = HAL_GetTick();
+			locator_periodic_ever_rx_    = true;
+			ForwardToBluetooth(rx_payload_, rx_message_size_);
+			break;
+		}
 		default: {
 			if (parsed.type == MsgType::FlightData || parsed.type == MsgType::FlightDataParity) {
 				// Locator is in DataRequested — record burst timing and arm deferred-ACK.
