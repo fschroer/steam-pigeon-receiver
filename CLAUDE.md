@@ -27,7 +27,7 @@ Locator repo to read its `docs/`.)
 - **BLE device name ≤ 22 chars.** Name + FFE0 + flags must fit the 31-byte advertisement;
   `device_name_length` is 20. Raising it past 22 risks dropping FFE0 from the advert, which
   silently breaks iOS background BLE.
-- **Wire format / shared enums are hand-synced across firmware, app, and (planned) iOS.**
+- **Wire format / shared enums are hand-synced across firmware, app, and iOS.**
   Change all copies in the same session.
 
 ## Cross-repo work
