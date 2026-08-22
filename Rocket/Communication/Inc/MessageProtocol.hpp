@@ -356,7 +356,11 @@ struct LocatorRocketSettings {
 	DeployMode deployment_ch3_mode = DeployMode::MainPrimary;
 	DeployMode deployment_ch4_mode = DeployMode::MainBackup;
 
-	uint16_t launch_detect_altitude;       // meters
+	// RESERVED.  The app does not set this and the locator keeps its own value;
+	// the slot stays so lora_channel below does not move (see the offsetof in
+	// Communication::SendPendingTx, ADR-0011).  The receiver only relays these
+	// bytes, so nothing here changes for it beyond the name.
+	uint16_t launch_detect_altitude;       // meters — reserved, not applied
 
 	uint8_t drogue_primary_deploy_delay;   // tenths of a second
 	uint8_t drogue_backup_deploy_delay;    // tenths of a second
@@ -364,7 +368,7 @@ struct LocatorRocketSettings {
 	uint16_t main_primary_deploy_altitude; // meters
 	uint16_t main_backup_deploy_altitude;  // meters
 
-	uint8_t deploy_signal_duration;        // tenths of a second
+	uint8_t deploy_signal_duration;        // tenths of a second — reserved, see above
 	uint8_t lora_channel;
 
 	char device_name[device_name_length] = { 0 };
