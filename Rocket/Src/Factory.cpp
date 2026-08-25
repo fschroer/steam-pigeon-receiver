@@ -44,6 +44,7 @@ void Factory::Service() {
 	comm_.ServicePendingTx();
 	comm_.ServiceNoiseFloor();
 	comm_.ServiceChannelSurvey();
+	comm_.ServiceLocatorSearch();
 	comm_.ServiceBadFrameTrace();
 	comm_.ServiceBleNameUpdate();
 	comm_.ServiceReceiverInfoResponse();

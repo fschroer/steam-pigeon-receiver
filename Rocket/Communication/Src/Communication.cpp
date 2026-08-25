@@ -94,9 +94,10 @@ void Communication::OnRadioRxError() {
 	// A frame was demodulated and failed the radio's own CRC: the direct signature
 	// of a collision, and until now discarded entirely one layer below us.
 	// Suppressed for the same window as the red LED, since the TX->RX transition
-	// manufactures one of these after every transmission, and during a survey,
-	// where the radio is parked on channels whose failures say nothing about home.
-	if (survey_active_)
+	// manufactures one of these after every transmission, and during a survey or a
+	// locator search, where the radio is parked on channels whose failures say
+	// nothing about home.
+	if (survey_active_ || search_active_)
 		return;
 	if (HAL_GetTick() - last_radio_tx_end_ms_ < kPostTxRxGuardMs)
 		return;
@@ -122,11 +123,42 @@ void Communication::ProcessRadioRx() {
 		// people's broadcasts on channels we are only visiting; forwarding them put
 		// a stranger's PreLaunchData in front of the app mid-scan and raised a
 		// conflict banner for a locator it is not sharing a channel with at all.
-		if (survey_active_) {
-			if (survey_phase_ == SurveyPhase::Confirm &&
-					survey_confirm_index_ < kSurveyConfirmCount &&
-					survey_confirm_frames_[survey_confirm_index_] < UINT8_MAX)
-				survey_confirm_frames_[survey_confirm_index_]++;
+		if (survey_active_ || search_active_) {
+			// Who sent it, as the frame CLAIMS.  Cleartext locator_id, straight off
+			// the wire, and only PreLaunchData and TelemetryData carry one — the
+			// receiver has no password and cannot check auth_tag, so this is
+			// identity to label a channel with, never identity to trust.
+			uint32_t sender_id = 0;
+			uint8_t  sender_armed = 0;
+			const char* sender_name = nullptr;
+			if (parsed.type == MsgType::PreLaunchData) {
+				sender_id    = parsed.prelaunch.locator_id;
+				sender_armed = parsed.prelaunch.armed;
+				sender_name  = parsed.prelaunch.device_name;
+			} else if (parsed.type == MsgType::TelemetryData) {
+				sender_id    = parsed.telemetry.locator_id;
+				sender_armed = parsed.telemetry.armed;
+				// TelemetryData carries no device_name; the id is all there is.
+			}
+			if (survey_active_ && survey_phase_ == SurveyPhase::Confirm &&
+					survey_confirm_index_ < kSurveyConfirmCount) {
+				if (survey_confirm_frames_[survey_confirm_index_] < UINT8_MAX)
+					survey_confirm_frames_[survey_confirm_index_]++;
+				// First id wins.  A channel with two locators on it is occupied
+				// either way, and the count already says how busy it is.
+				if (survey_confirm_locator_id_[survey_confirm_index_] == 0)
+					survey_confirm_locator_id_[survey_confirm_index_] = sender_id;
+			}
+			if (search_active_ && !search_hit_) {
+				search_hit_       = true;
+				search_hit_id_    = sender_id;
+				search_hit_rssi_  = rssi_;
+				search_hit_armed_ = sender_armed;
+				if (sender_name != nullptr)
+					std::memcpy(search_hit_name_, sender_name, device_name_length);
+				else
+					std::memset(search_hit_name_, 0, device_name_length);
+			}
 			RgbLed(RgbColor::Green, LedState::On);
 			last_radio_rx_end_ms_ = HAL_GetTick();
 			radio_rx_led_status_serviced_ = false;
@@ -259,9 +291,9 @@ void Communication::ProcessRadioRx() {
 			// driver no longer drops hardware CRC mismatches (#16), so collision
 			// garbage lands here instead of vanishing inside radio_driver.c.
 			//
-			// Not counted during a survey: the radio is parked on other channels
-			// then, and failures there say nothing about the home channel.
-			if (!survey_active_ && bad_frame_count_ < UINT8_MAX)
+			// Not counted during a survey or a search: the radio is parked on other
+			// channels then, and failures there say nothing about the home channel.
+			if (!survey_active_ && !search_active_ && bad_frame_count_ < UINT8_MAX)
 				bad_frame_count_++;
 		}
 	}
@@ -368,9 +400,9 @@ int16_t Communication::TakeNoiseFloor() {
 void Communication::ServiceNoiseFloor() {
 	if (radio_ == nullptr || radio_busy_)
 		return;
-	// A survey parks the radio on other channels; anything sampled then belongs to
-	// a different frequency and would poison the home channel's floor.
-	if (survey_active_)
+	// A survey or a search parks the radio on other channels; anything sampled then
+	// belongs to a different frequency and would poison the home channel's floor.
+	if (survey_active_ || search_active_)
 		return;
 	const uint32_t now = HAL_GetTick();
 	// Never read RSSI while our own transmit is still settling.
@@ -445,10 +477,10 @@ void Communication::BeginChannelSurvey() {
 		survey_response_pending_ = true;
 		return;
 	}
-	if (survey_active_) {
-		// A sweep is already running; report rather than ignoring the request. The
-		// running sweep will answer separately, and a duplicate response is harmless
-		// because the app matches on arrival, not on request.
+	if (survey_active_ || search_active_) {
+		// A sweep or a search is already running; report rather than ignoring the
+		// request.  The running one will answer separately, and a duplicate response
+		// is harmless because the app matches on arrival, not on request.
 		survey_status_ = ChannelSurveyStatus::RefusedBusy;
 		survey_response_pending_ = true;
 		return;
@@ -479,8 +511,10 @@ void Communication::BeginChannelSurvey() {
 	survey_channel_peak_ = kNoiseFloorUnknown;
 	survey_confirm_count_ = 0;
 	survey_confirm_index_ = 0;
-	for (uint8_t i = 0; i < kSurveyConfirmCount; i++)
+	for (uint8_t i = 0; i < kSurveyConfirmCount; i++) {
 		survey_confirm_frames_[i] = 0;
+		survey_confirm_locator_id_[i] = 0;
+	}
 	for (uint8_t i = 0; i < kSurveyChannelCount; i++)
 		survey_level_[i] = 0;
 	SetChannel(survey_channel_);
@@ -638,6 +672,8 @@ void Communication::ServiceChannelSurvey() {
 					sizeof(msg.confirmed_channel));
 			std::memcpy(msg.confirmed_frames, survey_confirm_frames_,
 					sizeof(msg.confirmed_frames));
+			std::memcpy(msg.confirmed_locator_id, survey_confirm_locator_id_,
+					sizeof(msg.confirmed_locator_id));
 		}
 		msg.packet_header.crc = ComputeMessageCrc(msg);
 		ForwardToBluetooth(reinterpret_cast<const uint8_t*>(&msg), sizeof(msg));
@@ -698,6 +734,10 @@ void Communication::ServiceChannelSurvey() {
 		// Frames decoded here is the load-bearing number, not the level.
 		SurveyTraceLine("confirm ch/frames", static_cast<int32_t>(survey_channel_),
 				static_cast<int32_t>(survey_confirm_frames_[survey_confirm_index_]));
+		// Who, not just how many — the number that turns "this channel is busy"
+		// into "your Redline is sitting on it".
+		SurveyTraceLine("confirm ch/id", static_cast<int32_t>(survey_channel_),
+				static_cast<int32_t>(survey_confirm_locator_id_[survey_confirm_index_]));
 		if (++survey_confirm_index_ >= survey_confirm_count_) {
 			FinishChannelSurvey();
 			return;
@@ -708,12 +748,238 @@ void Communication::ServiceChannelSurvey() {
 	survey_channel_start_ms_ = HAL_GetTick();
 }
 
+void Communication::SearchTraceLine(const char* tag, int32_t a, int32_t b) {
+	StaticStringWriter<UART_LINE_MAX_LENGTH> line(&huart2_);
+	line.WriteMany("[search] ", tag, " ", a, " ", b, "\r\n");
+}
+
+uint8_t Communication::SearchChannelAt(uint8_t index) const {
+	// The whole-band run walks 0..63 in order rather than copying 64 numbers into
+	// a 16-slot list.  Same walk either way, so everything downstream is unaware
+	// of which kind of run it is servicing.
+	return search_whole_band_ ? index : search_channel_[index];
+}
+
+void Communication::BeginLocatorSearch(const LocatorSearchRequest& req) {
+	// Cancel rides on the same message, because it only means anything while a run
+	// is in progress and the app already knows how to send this one.  Answered
+	// even when nothing is running: silence is the one reply the app cannot tell
+	// apart from firmware that has never heard of a search.
+	if (req.flags & kSearchFlagCancel) {
+		if (search_active_)
+			FinishLocatorSearch(LocatorSearchStatus::Cancelled);
+		else
+			RefuseLocatorSearch(LocatorSearchStatus::Cancelled);
+		return;
+	}
+	if (radio_ == nullptr) {
+		RefuseLocatorSearch(LocatorSearchStatus::RefusedBusy);
+		return;
+	}
+	if (search_active_) {
+		// A run is already streaming, and that stream IS the answer to this request.
+		// Queuing a refusal here instead would put a terminator in front of the app
+		// mid-run — it would mark the search finished and then go on receiving
+		// per-channel results for a run it believes has ended.  This is where the
+		// survey's rule ("always answer, a duplicate response is harmless") stops
+		// applying: a duplicate is harmless only for a single-shot response.
+		return;
+	}
+	if (survey_active_) {
+		RefuseLocatorSearch(LocatorSearchStatus::RefusedBusy);
+		return;
+	}
+	// The same enforcement the survey has, against a worse version of the same
+	// hazard.  A survey is ~7 s of deafness; a whole-band search is ~77 s, so one
+	// running over a live flight would lose the entire descent.  App-side gating is
+	// soft (ADR-0006); this is the gate that actually holds.
+	if (locator_armed_ || locator_in_flight_) {
+		RefuseLocatorSearch(LocatorSearchStatus::RefusedArmed);
+		SearchTraceLine("refused armed", 0, 0);
+		return;
+	}
+	if (locator_in_profile_mode_) {
+		RefuseLocatorSearch(LocatorSearchStatus::RefusedBusy);
+		SearchTraceLine("refused profile-mode", 0, 0);
+		return;
+	}
+
+	search_count_ = 0;
+	search_whole_band_ = (req.channel_count == 0);
+	if (!search_whole_band_) {
+		const uint8_t requested = (req.channel_count > kSearchMaxChannels)
+				? kSearchMaxChannels : req.channel_count;
+		// Copy only channels that exist, and only once each.  The app builds this
+		// list from several sources that legitimately overlap — a locator's last
+		// known channel is often the receiver's current one — and a duplicate would
+		// cost a full 1.2 s dwell to learn the same thing twice.
+		for (uint8_t i = 0; i < requested; i++) {
+			const uint8_t ch = req.channel[i];
+			if (ch >= kSurveyChannelCount)
+				continue;
+			bool already = false;
+			for (uint8_t j = 0; j < search_count_; j++)
+				already = already || (search_channel_[j] == ch);
+			if (!already)
+				search_channel_[search_count_++] = ch;
+		}
+		if (search_count_ == 0) {
+			// A list that was entirely out of range is a caller error, not an empty
+			// band.  Refusing says so; falling through to a whole-band sweep would
+			// turn a typo into 77 s of deafness.
+			RefuseLocatorSearch(LocatorSearchStatus::RefusedBusy);
+			SearchTraceLine("refused empty list", 0, 0);
+			return;
+		}
+	}
+
+	search_active_       = true;
+	search_target_id_    = req.target_locator_id;
+	search_index_        = 0;
+	search_hit_          = false;
+	search_hit_id_       = 0;
+	search_hit_rssi_     = 0;
+	search_hit_armed_    = 0;
+	std::memset(search_hit_name_, 0, device_name_length);
+	search_home_channel_ = archive_.GetReceiverSettings().lora_channel;
+	SetChannel(SearchChannelAt(0));
+	search_start_ms_         = HAL_GetTick();
+	search_channel_start_ms_ = search_start_ms_;
+	SearchTraceLine("start channels/target",
+			static_cast<int32_t>(search_whole_band_ ? kSurveyChannelCount : search_count_),
+			static_cast<int32_t>(search_target_id_));
+}
+
+void Communication::RefuseLocatorSearch(LocatorSearchStatus status) {
+	// Nothing was retuned, so there is nothing to restore — but the app still gets
+	// an explicit end, out of the same queue every other ending uses.
+	//
+	// The run description is cleared ONLY when no run owns it.  The commonest
+	// refusal is a second request arriving while the first is still sweeping, and
+	// zeroing search_count_ there would cut the live run short on its next slice:
+	// its total would read 0, and the very next channel boundary would satisfy
+	// `search_index_ >= total` and end it as though it had finished.
+	if (!search_active_) {
+		search_count_      = 0;
+		search_whole_band_ = false;
+	}
+	search_status_     = status;
+	search_terminator_pending_ = true;
+}
+
+void Communication::FinishLocatorSearch(LocatorSearchStatus status) {
+	search_active_ = false;
+	// Full restore, in the survey's order and for the survey's reason (ADR-0019
+	// Decision 6): channel first, then re-arm RX, or the radio sits on the right
+	// frequency without listening and the link looks dead for no visible reason.
+	SetChannel(search_home_channel_);
+	if (radio_ != nullptr)
+		radio_->Rx(kRxTimeoutMs);
+	// Sampled on other channels throughout, so the accumulated peak describes the
+	// wrong frequency.
+	noise_floor_peak_ = kNoiseFloorUnknown;
+	search_status_ = status;
+	search_terminator_pending_ = true;
+	SearchTraceLine("done status/ms", static_cast<int32_t>(status),
+			static_cast<int32_t>(HAL_GetTick() - search_start_ms_));
+	SearchTraceLine("restored channel", static_cast<int32_t>(search_home_channel_), 0);
+}
+
+void Communication::SendSearchResult(LocatorSearchStatus status, uint8_t channel,
+		uint8_t searched) {
+	LocatorSearchResult msg { };
+	msg.packet_header.system_id = system_id;
+	msg.packet_header.msg_type  = MsgType::LocatorSearchResult;
+	msg.packet_header.msg_count = 0;
+	msg.packet_header.crc       = 0;
+	msg.status   = static_cast<uint8_t>(status);
+	msg.channel  = channel;
+	msg.searched = searched;
+	msg.total    = search_whole_band_ ? kSurveyChannelCount : search_count_;
+	// Only a per-channel result carries a hit.  A terminator reports the ending and
+	// nothing else, so the app never has to work out whether the fields on it mean
+	// anything.
+	if (status == LocatorSearchStatus::Progress && search_hit_) {
+		msg.found      = 1;
+		msg.armed      = search_hit_armed_;
+		msg.rssi       = search_hit_rssi_;
+		msg.locator_id = search_hit_id_;
+		std::memcpy(msg.device_name, search_hit_name_, device_name_length);
+	}
+	msg.packet_header.crc = ComputeMessageCrc(msg);
+	ForwardToBluetooth(reinterpret_cast<const uint8_t*>(&msg), sizeof(msg));
+}
+
+void Communication::ServiceLocatorSearch() {
+	if (search_terminator_pending_) {
+		search_terminator_pending_ = false;
+		SendSearchResult(search_status_, 0, 0);
+		return;
+	}
+	if (!search_active_ || radio_ == nullptr)
+		return;
+
+	// Abort if the locator arms or launches mid-run, exactly as the survey does.
+	// The window is ten times wider here, so this is the check that earns its keep:
+	// someone can walk to the pad and arm while a whole-band run is still going.
+	if (locator_armed_ || locator_in_flight_) {
+		FinishLocatorSearch(LocatorSearchStatus::RefusedArmed);
+		return;
+	}
+
+	const uint32_t now = HAL_GetTick();
+	// Backstop: whatever goes wrong, restore the radio and terminate the stream.  A
+	// search that dies silently leaves the receiver deaf on some other channel,
+	// which is the worst state this feature can produce.
+	if (now - search_start_ms_ >= kSearchDeadlineMs) {
+		SearchTraceLine("DEADLINE ch/index",
+				static_cast<int32_t>(SearchChannelAt(search_index_)),
+				static_cast<int32_t>(search_index_));
+		FinishLocatorSearch(LocatorSearchStatus::RefusedBusy);
+		return;
+	}
+
+	if (now - search_channel_start_ms_ < kSearchDwellMs)
+		return;
+
+	const uint8_t total = search_whole_band_ ? kSurveyChannelCount : search_count_;
+	const uint8_t channel = SearchChannelAt(search_index_);
+	SearchTraceLine("channel/id", static_cast<int32_t>(channel),
+			static_cast<int32_t>(search_hit_ ? search_hit_id_ : 0));
+	SendSearchResult(LocatorSearchStatus::Progress, channel,
+			static_cast<uint8_t>(search_index_ + 1));
+
+	// Stop early only for a locator the app named.  With no target the run is a
+	// census — "who is out there" — and stopping at the first hit would hide the
+	// second rocket, which is one of the cases this exists for.
+	const bool target_found = search_hit_ && search_target_id_ != 0
+			&& search_hit_id_ == search_target_id_;
+	search_hit_       = false;
+	search_hit_id_    = 0;
+	search_hit_rssi_  = 0;
+	search_hit_armed_ = 0;
+	std::memset(search_hit_name_, 0, device_name_length);
+
+	if (target_found || ++search_index_ >= total) {
+		FinishLocatorSearch(LocatorSearchStatus::Done);
+		return;
+	}
+	SetChannel(SearchChannelAt(search_index_));
+	search_channel_start_ms_ = HAL_GetTick();
+}
+
 void Communication::ServicePendingTx() {
-	// Never transmit while a survey has the radio parked on another channel: the
-	// burst would go out on the survey frequency, so the locator would not hear it
-	// and whatever is on that channel would. The queued message simply waits —
-	// ServicePendingTx is polled, and a sweep is over in about a second.
-	if (survey_active_)
+	// Never transmit while a survey or a search has the radio parked on another
+	// channel: the burst would go out on that frequency, so the locator would not
+	// hear it and whatever is on that channel would.  The queued message simply
+	// waits — ServicePendingTx is polled.
+	//
+	// A survey is over in about a second, but a whole-band search runs ~77 s, so
+	// "it will be along shortly" stopped being true.  That is survivable only
+	// because a search is the no-locator state by definition: it is started when
+	// nothing is coming through, and it aborts the moment a locator arms or flies.
+	// A command queued against a locator we cannot hear had nowhere to go anyway.
+	if (survey_active_ || search_active_)
 		return;
 	// Apply a deferred receiver channel switch once the forwarded locator config
 	// change has finished transmitting.  Done here (main loop), not right after
@@ -909,6 +1175,9 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 		case MsgType::ChannelSurveyRequest:
 			message_length_ = 0;
 			break;
+		case MsgType::LocatorSearchRequest:
+			message_length_ = sizeof(LocatorSearchRequest) - sizeof(PacketHeader);
+			break;
 		}
 		if (message_length_ > 64) { // Safety check
 			Reset();
@@ -979,6 +1248,18 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 				// Automatically send ReceiverInfo so the app gets confirmation without
 				// waiting for it to poll with a ReceiverInfoRequest.
 				receiver_info_response_pending_ = true;
+			} else if (current_msg_.header.msg_type == MsgType::LocatorSearchRequest) {
+				// Receiver-local, like the survey: the locator plays no part in a
+				// search and must never see this message.  Forwarding it would put an
+				// unknown MsgType on the air for every locator in earshot to parse.
+				if (ValidateCRC(reinterpret_cast<const uint8_t*>(&current_msg_),
+						sizeof(PacketHeader) + message_length_)) {
+					LocatorSearchRequest req { };
+					req.packet_header = current_msg_.header;
+					std::memcpy(reinterpret_cast<uint8_t*>(&req) + sizeof(PacketHeader),
+							current_msg_.payload, message_length_);
+					BeginLocatorSearch(req);
+				}
 			} else {
 				// All other payloaded messages: validate CRC and queue for timed forwarding.
 				if (ValidateCRC(reinterpret_cast<const uint8_t*>(&current_msg_),

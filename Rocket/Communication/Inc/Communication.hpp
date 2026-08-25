@@ -132,6 +132,10 @@ public:
 	// Call from the main loop: advances the channel survey one slice per call
 	// (ADR-0019 tier 3).  Never blocks for the whole sweep.
 	void ServiceChannelSurvey();
+	// Call from the main loop: advances a locator search one slice per call and
+	// streams one result per channel as it finishes.  Same slicing discipline as
+	// the survey; a full-band run lasts ~77 s and must never block the loop.
+	void ServiceLocatorSearch();
 	// Call from the main loop: reports bad frames to the console as they happen,
 	// independent of whether any broadcast is getting through (ADR-0019).
 	void ServiceBadFrameTrace();
@@ -290,6 +294,10 @@ private:
 	uint8_t  survey_confirm_channel_[kSurveyConfirmCount] = { };
 	// Locator frames decoded during each channel's confirm dwell (#33).
 	uint8_t  survey_confirm_frames_[kSurveyConfirmCount] = { };
+	// Who was on each confirmed channel, from the first frame decoded there (#33
+	// follow-up).  0 = nothing decoded, or a frame type that carries no id.  Claimed
+	// identity, never authenticated — the receiver still does not inspect auth_tag.
+	uint32_t survey_confirm_locator_id_[kSurveyConfirmCount] = { };
 	uint8_t  survey_confirm_count_ = 0;    // how many made the shortlist
 	uint8_t  survey_confirm_index_ = 0;    // which of them is dwelling now
 	uint32_t survey_start_ms_ = 0;         // for kSurveyDeadlineMs
@@ -311,6 +319,59 @@ private:
 	// an extra round trip.
 	void SurveyTraceLine(const char* tag, int32_t a, int32_t b);
 	void SurveyTraceCoarseTable();
+	// The search's counterpart, tagged [search] so a bench trace never leaves you
+	// guessing which of the two sweeps produced a line.
+	void SearchTraceLine(const char* tag, int32_t a, int32_t b);
+
+	// ── Locator search (#33 follow-up) ────────────────────────────────────────
+	//
+	// Deliberately NOT folded into the survey.  The survey shortlists the QUIETEST
+	// channels; this dwells on named candidates and reports what is on them.  One
+	// sweep cannot answer both questions, and sharing the state would let the
+	// shortlist rule silently decide which one it was answering.
+	//
+	// The dwell is the survey's confirm dwell, for the reason the confirm phase
+	// exists: a locator is on air ~138 ms once per second, so anything shorter
+	// reads an occupied channel as empty most of the time.
+	static constexpr uint32_t kSearchDwellMs = kSurveyConfirmDwellMs;
+	// Backstop for the whole run, sized for the widest case: 64 channels x 1.2 s is
+	// ~77 s, so this is that plus margin.  A run that hits it restores the radio and
+	// terminates the stream, rather than leaving the app waiting on a receiver that
+	// is quietly deaf.
+	static constexpr uint32_t kSearchDeadlineMs = 90000u;
+
+	bool     search_active_ = false;
+	uint8_t  search_home_channel_ = 0;      // restored when the run ends or aborts
+	uint32_t search_target_id_ = 0;         // 0 = report every hit; else stop on this id
+	uint8_t  search_channel_[kSearchMaxChannels] = { };
+	uint8_t  search_count_ = 0;             // channels in this run
+	uint8_t  search_index_ = 0;             // which one is dwelling now
+	bool     search_whole_band_ = false;    // walking 0..63 rather than search_channel_
+	uint32_t search_start_ms_ = 0;
+	uint32_t search_channel_start_ms_ = 0;
+	// What decoded on the channel currently dwelling.  Only the FIRST hit is kept:
+	// the question is "is a locator here", and a second frame from the same locator
+	// within one dwell is the normal case, not new information.
+	bool     search_hit_ = false;
+	uint32_t search_hit_id_ = 0;
+	int16_t  search_hit_rssi_ = 0;
+	uint8_t  search_hit_armed_ = 0;
+	char     search_hit_name_[device_name_length] = { };
+	// Terminator waiting to be sent (Done / Refused* / Cancelled).  Queued rather
+	// than sent inline so every exit path — refusal, deadline, cancel, normal end —
+	// leaves through one place and the app always gets an explicit end.
+	bool     search_terminator_pending_ = false;
+	LocatorSearchStatus search_status_ = LocatorSearchStatus::Done;
+
+	void BeginLocatorSearch(const LocatorSearchRequest& req);
+	// Ends a run that never started: queues the terminator without touching the
+	// radio.  Split from FinishLocatorSearch so a refusal cannot accidentally
+	// "restore" a channel the run never left.
+	void RefuseLocatorSearch(LocatorSearchStatus status);
+	void FinishLocatorSearch(LocatorSearchStatus status);
+	void SendSearchResult(LocatorSearchStatus status, uint8_t channel, uint8_t searched);
+	// The channel dwelling now, whichever list this run is walking.
+	uint8_t SearchChannelAt(uint8_t index) const;
 
 	// Deferred receiver channel switch after forwarding a locator channel change.
 	// radio_->Send() only *starts* the forward; changing the RF frequency before

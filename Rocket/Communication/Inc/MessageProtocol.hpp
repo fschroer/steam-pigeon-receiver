@@ -39,7 +39,9 @@ enum class MsgType : uint8_t {
 	FlightEvents = 19,          // Per-record flight event summary sent alongside a FlightData transfer.
 	ChannelSurveyRequest = 20,  // Request from the app to the receiver to sweep the band (no locator involved).
 	ChannelSurvey = 21,         // Response from the receiver with per-channel occupancy.
-	PadAlertSnoozeRequest = 22  // App→locator: suppress the prepped-and-disarmed alert for N minutes (#37).
+	PadAlertSnoozeRequest = 22, // App→locator: suppress the prepped-and-disarmed alert for N minutes (#37).
+	LocatorSearchRequest = 23,  // Request from the app to the receiver to listen for locators on named channels (no locator involved).
+	LocatorSearchResult = 24    // Streamed response: one per channel searched, plus a terminator.
 };
 
 // Flight event summary indices — wire order of FlightEventsMessage::event_timestamp_ms.
@@ -220,6 +222,16 @@ struct ChannelSurveyResponse {
 	// the dwell is one broadcast period, so a sparser emitter can still slip
 	// through, and a non-locator device is invisible to this test entirely.
 	uint8_t confirmed_frames[kSurveyConfirmCount];
+	// The locator_id of the FIRST frame decoded on each confirmed channel, 0 for
+	// none.  Cleartext (the locator broadcasts its MPU UID in the clear); the
+	// receiver still never inspects auth_tag, so this is identity as CLAIMED, not
+	// as authenticated.  Diagnostic only: the app labels an occupied channel with
+	// it, and nothing is ever gated on it.
+	//
+	// Only PreLaunchData and TelemetryData carry an id.  Any other decoded frame
+	// still counts in confirmed_frames but leaves this 0 — "occupied by something
+	// that would not say who".
+	uint32_t confirmed_locator_id[kSurveyConfirmCount];
 };
 
 struct TelemetryMessageExtended {
@@ -289,8 +301,66 @@ static_assert(sizeof(TelemetryMessageExtended) ==  83,
 // Channel survey (ADR-0019 tier 3).  Receiver-only messages; the locator reserves
 // the MsgType values but never sends or parses these.
 static_assert(sizeof(ChannelSurveyRequest)  ==  6, "ChannelSurveyRequest is header-only");
-static_assert(sizeof(ChannelSurveyResponse) == 84,
-		"ChannelSurveyResponse size changed — sync the app's CHANNEL_SURVEY_PAYLOAD_SIZE (78)");
+static_assert(sizeof(ChannelSurveyResponse) == 104,
+		"ChannelSurveyResponse size changed — sync the app's CHANNEL_SURVEY_PAYLOAD_SIZE (98)");
+
+// ── Locator search (#33 follow-up) ────────────────────────────────────────────
+//
+// The survey answers "which channel is quiet".  This answers the opposite
+// question — "which channel is my locator ON" — and the two cannot share a sweep:
+// the survey's confirm phase dwells on the QUIETEST candidates, so the channel a
+// locator is actively using is shortlisted only by accident.
+//
+// Receiver-directed end to end, like the survey: the locator plays no part and
+// never sees either message.  Unlike the survey it streams, one result per
+// channel as that channel finishes, because a full-band run is ~77 s and a single
+// response at the end would leave the app with a dead progress bar and no way to
+// show a hit the moment it happens.
+inline constexpr uint8_t kSearchMaxChannels = 16;   // candidate list cap; 0 = whole band
+// Stop a run in progress.  A flag on the request rather than a message of its
+// own: cancel is meaningless except while a search is running, and the app
+// already knows how to send this one.
+inline constexpr uint8_t kSearchFlagCancel = 0x01;
+
+enum class LocatorSearchStatus : uint8_t {
+	Progress     = 0,   // one channel finished; `found` says whether anything was on it
+	Done         = 1,   // run complete — all channels searched, or stopped on the target
+	RefusedArmed = 2,   // locator armed or in flight — searching would go deaf over a live flight
+	RefusedBusy  = 3,   // a survey or a flight-data transfer already owns the radio
+	Cancelled    = 4,   // the app asked it to stop
+};
+
+struct LocatorSearchRequest {
+	PacketHeader packet_header;
+	uint8_t  flags;              // bit0 = cancel a run in progress; all other bits reserved 0
+	uint8_t  channel_count;      // channels in `channel`; 0 = sweep the whole band
+	// Stop as soon as THIS locator is decoded, rather than searching every listed
+	// channel.  0 = report everything found, which is the only useful behaviour when
+	// the app has never seen the locator before (a borrowed one has no known id).
+	uint32_t target_locator_id;
+	uint8_t  channel[kSearchMaxChannels];
+};
+
+struct LocatorSearchResult {
+	PacketHeader packet_header;
+	uint8_t  status;      // LocatorSearchStatus
+	uint8_t  channel;     // the channel just searched; 0 on a terminator
+	uint8_t  searched;    // 1-based position of this channel in the run
+	uint8_t  total;       // channels in the run, so the app can show real progress
+	uint8_t  found;       // 1 = a locator frame decoded on `channel`
+	uint8_t  armed;       // the locator's own armed byte, 0 when !found
+	int16_t  rssi;        // RSSI of the decoded frame (dBm), 0 when !found
+	uint32_t locator_id;  // 0 when !found, or when the frame carried no id
+	// Carried for the same reason the id is not enough: a borrowed locator is
+	// unknown to the app, so an id alone would report it as a bare hex number.  The
+	// name is what makes the hit readable.  Cleartext and unauthenticated, like the id.
+	char     device_name[device_name_length];
+};
+
+static_assert(sizeof(LocatorSearchRequest) == 28,
+		"LocatorSearchRequest size changed — sync the app's LOCATOR_SEARCH_REQUEST_PAYLOAD_SIZE (22)");
+static_assert(sizeof(LocatorSearchResult) == 38,
+		"LocatorSearchResult size changed — sync the app's LOCATOR_SEARCH_RESULT_PAYLOAD_SIZE (32)");
 
 // On-wire packet for flight profile transfer
 struct FlightDataPacket {
