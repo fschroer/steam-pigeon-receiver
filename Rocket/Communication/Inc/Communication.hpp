@@ -355,6 +355,7 @@ private:
 	bool     search_hit_ = false;
 	uint32_t search_hit_id_ = 0;
 	int16_t  search_hit_rssi_ = 0;
+	int8_t   search_hit_snr_ = 0;
 	uint8_t  search_hit_armed_ = 0;
 	char     search_hit_name_[device_name_length] = { };
 	// Terminator waiting to be sent (Done / Refused* / Cancelled).  Queued rather

@@ -153,6 +153,7 @@ void Communication::ProcessRadioRx() {
 				search_hit_       = true;
 				search_hit_id_    = sender_id;
 				search_hit_rssi_  = rssi_;
+				search_hit_snr_   = LoraSnr_FskCfo_;
 				search_hit_armed_ = sender_armed;
 				if (sender_name != nullptr)
 					std::memcpy(search_hit_name_, sender_name, device_name_length);
@@ -839,6 +840,7 @@ void Communication::BeginLocatorSearch(const LocatorSearchRequest& req) {
 	search_hit_          = false;
 	search_hit_id_       = 0;
 	search_hit_rssi_     = 0;
+	search_hit_snr_      = 0;
 	search_hit_armed_    = 0;
 	std::memset(search_hit_name_, 0, device_name_length);
 	search_home_channel_ = archive_.GetReceiverSettings().lora_channel;
@@ -903,6 +905,7 @@ void Communication::SendSearchResult(LocatorSearchStatus status, uint8_t channel
 		msg.found      = 1;
 		msg.armed      = search_hit_armed_;
 		msg.rssi       = search_hit_rssi_;
+		msg.snr        = search_hit_snr_;
 		msg.locator_id = search_hit_id_;
 		std::memcpy(msg.device_name, search_hit_name_, device_name_length);
 	}
@@ -946,6 +949,11 @@ void Communication::ServiceLocatorSearch() {
 	const uint8_t channel = SearchChannelAt(search_index_);
 	SearchTraceLine("channel/id", static_cast<int32_t>(channel),
 			static_cast<int32_t>(search_hit_ ? search_hit_id_ : 0));
+	// Only for a hit, and only on the bench path: this is the pair that tells a real
+	// occupant from a near-field artifact, which cost a relocation to diagnose once.
+	if (search_hit_)
+		SearchTraceLine("channel rssi/snr", static_cast<int32_t>(search_hit_rssi_),
+				static_cast<int32_t>(search_hit_snr_));
 	SendSearchResult(LocatorSearchStatus::Progress, channel,
 			static_cast<uint8_t>(search_index_ + 1));
 
@@ -957,6 +965,7 @@ void Communication::ServiceLocatorSearch() {
 	search_hit_       = false;
 	search_hit_id_    = 0;
 	search_hit_rssi_  = 0;
+	search_hit_snr_   = 0;
 	search_hit_armed_ = 0;
 	std::memset(search_hit_name_, 0, device_name_length);
 

@@ -350,6 +350,13 @@ struct LocatorSearchResult {
 	uint8_t  found;       // 1 = a locator frame decoded on `channel`
 	uint8_t  armed;       // the locator's own armed byte, 0 when !found
 	int16_t  rssi;        // RSSI of the decoded frame (dBm), 0 when !found
+	// SNR of the same frame (dB), 0 when !found.  Carried alongside RSSI because
+	// neither answers the question alone: a locator a few feet away is heard on
+	// channels it is nowhere near (Appendix G), and that artifact reads as STRONG.
+	// SNR is what separates it from the real thing, so a hit reporting both can be
+	// judged rather than guessed at.  Bench 2026-08-27 found a locator on channel
+	// 57 reported on 17 as well, and distance was the only way to tell them apart.
+	int8_t   snr;
 	uint32_t locator_id;  // 0 when !found, or when the frame carried no id
 	// Carried for the same reason the id is not enough: a borrowed locator is
 	// unknown to the app, so an id alone would report it as a bare hex number.  The
@@ -359,8 +366,8 @@ struct LocatorSearchResult {
 
 static_assert(sizeof(LocatorSearchRequest) == 28,
 		"LocatorSearchRequest size changed — sync the app's LOCATOR_SEARCH_REQUEST_PAYLOAD_SIZE (22)");
-static_assert(sizeof(LocatorSearchResult) == 38,
-		"LocatorSearchResult size changed — sync the app's LOCATOR_SEARCH_RESULT_PAYLOAD_SIZE (32)");
+static_assert(sizeof(LocatorSearchResult) == 39,
+		"LocatorSearchResult size changed — sync the app's LOCATOR_SEARCH_RESULT_PAYLOAD_SIZE (33)");
 
 // On-wire packet for flight profile transfer
 struct FlightDataPacket {
