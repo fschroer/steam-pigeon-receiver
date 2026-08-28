@@ -182,6 +182,11 @@ enum class ChannelSurveyStatus : uint8_t {
 	Ok           = 0,
 	RefusedArmed = 1,   // locator is armed — sweeping would drop flight telemetry
 	RefusedBusy  = 2,   // flight-data transfer in progress
+	// Given up so a queued app→locator command could go out. Its own value rather
+	// than RefusedBusy: the app words that one as "a flight data transfer is in
+	// progress", which would be a plain lie about what just happened. No size
+	// change — this is one more value in a byte that already exists.
+	Cancelled    = 3,
 };
 
 struct ChannelSurveyRequest {

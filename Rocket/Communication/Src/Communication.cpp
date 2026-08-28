@@ -980,16 +980,40 @@ void Communication::ServiceLocatorSearch() {
 void Communication::ServicePendingTx() {
 	// Never transmit while a survey or a search has the radio parked on another
 	// channel: the burst would go out on that frequency, so the locator would not
-	// hear it and whatever is on that channel would.  The queued message simply
-	// waits — ServicePendingTx is polled.
+	// hear it and whatever is on that channel would.
 	//
-	// A survey is over in about a second, but a whole-band search runs ~77 s, so
-	// "it will be along shortly" stopped being true.  That is survivable only
-	// because a search is the no-locator state by definition: it is started when
-	// nothing is coming through, and it aborts the moment a locator arms or flies.
-	// A command queued against a locator we cannot hear had nowhere to go anyway.
-	if (survey_active_ || search_active_)
+	// A QUEUED COMMAND ENDS THE SWEEP RATHER THAN WAITING BEHIND IT.  The previous
+	// rule — let it wait, a sweep is soon over — rested on two claims and both were
+	// wrong.  "It aborts the moment a locator arms" cannot happen: the armed flags
+	// are only assigned in ProcessRadioRx's PreLaunchData/TelemetryData cases, which
+	// a sweep returns before reaching, so they are frozen for its duration.  And "a
+	// command queued against a locator we cannot hear had nowhere to go anyway" is
+	// false for the one message where it matters: an ArmRequest goes out the instant
+	// the sweep ends.
+	//
+	// Measured on the bench 2026-08-28: Arm pressed during a whole-band search did
+	// nothing visible, and the locator armed when the sweep finished — up to 77 s
+	// later, by which time the operator has read it as a failed arm and may be at
+	// the pad.  A late pyro arming is a different class of problem from lost
+	// telemetry.
+	//
+	// So the operator's command wins.  Ending the sweep also restores the radio to
+	// the home channel, which is what makes the command deliverable at all — and it
+	// is the abort ADR-0029 decision 7 wanted, reached by the path that actually
+	// exists: the receiver cannot HEAR a locator arm, but it does see the app's
+	// ArmRequest pass through it.  Sent on the next poll rather than here, so the
+	// retune settles and every timing guard below still applies.
+	if (survey_active_ || search_active_) {
+		if (pending_tx_.ready) {
+			if (search_active_)
+				FinishLocatorSearch(LocatorSearchStatus::Cancelled);
+			if (survey_active_) {
+				survey_status_ = ChannelSurveyStatus::Cancelled;
+				FinishChannelSurvey();
+			}
+		}
 		return;
+	}
 	// Apply a deferred receiver channel switch once the forwarded locator config
 	// change has finished transmitting.  Done here (main loop), not right after
 	// radio_->Send(), so we never change RF frequency mid-transmit and corrupt the
