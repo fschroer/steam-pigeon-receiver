@@ -318,7 +318,7 @@ static_assert(sizeof(ChannelSurveyResponse) == 104,
 //
 // Receiver-directed end to end, like the survey: the locator plays no part and
 // never sees either message.  Unlike the survey it streams, one result per
-// channel as that channel finishes, because a full-band run is ~77 s and a single
+// channel as that channel finishes, because a full-band run is up to ~90 s and a single
 // response at the end would leave the app with a dead progress bar and no way to
 // show a hit the moment it happens.
 inline constexpr uint8_t kSearchMaxChannels = 16;   // candidate list cap; 0 = whole band

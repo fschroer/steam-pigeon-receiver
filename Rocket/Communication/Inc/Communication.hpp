@@ -134,7 +134,7 @@ public:
 	void ServiceChannelSurvey();
 	// Call from the main loop: advances a locator search one slice per call and
 	// streams one result per channel as it finishes.  Same slicing discipline as
-	// the survey; a full-band run lasts ~77 s and must never block the loop.
+	// the survey; a full-band run lasts up to ~90 s and must never block the loop.
 	void ServiceLocatorSearch();
 	// Call from the main loop: reports bad frames to the console as they happen,
 	// independent of whether any broadcast is getting through (ADR-0019).
@@ -262,16 +262,30 @@ private:
 	// neighbors. The time artifact remains; it just stops correlating with
 	// frequency, so the shortlist is no longer drawn from one accidental region.
 	static constexpr uint8_t  kSurveyCoarseStride = 7u;
-	// Must exceed the ~1 s broadcast period so at least one transmission is
-	// guaranteed to fall inside it, with margin for cadence jitter.
-	static constexpr uint32_t kSurveyConfirmDwellMs = 1200u;
+	// Must contain a WHOLE broadcast, so it has to exceed the 1 s period plus one
+	// frame's airtime -- a burst that straddles either edge does not decode, and a
+	// frame that does not decode is exactly what this dwell exists to see.
+	//
+	// **Sized against PreLaunchData, 118 bytes.**  This was 1200 ms, from an airtime
+	// of ~138 ms, which is TelemetryData (77 bytes) -- the frame an ARMED locator
+	// sends.  Both scans look for a DISARMED one on the pad, and PreLaunchData at
+	// SF7/125 kHz/CR4/5 is ~200 ms on air.  1000 + 200 = 1200 exactly, so the old
+	// value sat precisely on the boundary with ZERO margin: whether a channel caught
+	// its locator came down to where that locator's 1 Hz phase happened to land.
+	// Reported as a search that "sometimes misses one of the locators".
+	//
+	// 1400 ms restores 200 ms of margin, which covers the locator's 20 Hz service
+	// tick (50 ms of scheduling granularity on the send instant) several times over.
+	// If the broadcast grows again, this must grow with it -- the requirement is
+	// period + airtime + jitter, not a round number.
+	static constexpr uint32_t kSurveyConfirmDwellMs = 1400u;
 	// Throttle RSSI reads.  Sampling every main-loop pass was defensible at a 15 ms
-	// dwell (~1500 reads per channel); at 1200 ms it is ~120000 per channel and
-	// ~600000 per sweep, each one a SUBGHZ SPI transaction that polls the radio's
-	// BUSY line.  1 ms still gives ~1200 samples across a confirm dwell, far more
-	// than needed to catch a 138 ms burst.
+	// dwell (~1500 reads per channel); at 1400 ms it is ~140000 per channel and
+	// ~700000 per sweep, each one a SUBGHZ SPI transaction that polls the radio's
+	// BUSY line.  1 ms still gives ~1400 samples across a confirm dwell, far more
+	// than needed to catch a ~200 ms burst.
 	static constexpr uint32_t kSurveySampleIntervalMs = 1u;
-	// Hard ceiling on a whole sweep.  Nominally ~7 s (0.8 s coarse + 5 x 1.2 s);
+	// Hard ceiling on a whole sweep.  Nominally ~7.8 s (0.8 s coarse + 5 x 1.4 s);
 	// this is the backstop that guarantees the app always gets an answer, so a
 	// sweep that stalls for any reason cannot leave it waiting forever.
 	static constexpr uint32_t kSurveyDeadlineMs = 12000u;
@@ -331,14 +345,50 @@ private:
 	// shortlist rule silently decide which one it was answering.
 	//
 	// The dwell is the survey's confirm dwell, for the reason the confirm phase
-	// exists: a locator is on air ~138 ms once per second, so anything shorter
-	// reads an occupied channel as empty most of the time.
+	// exists: a disarmed locator is on air ~200 ms once per second, so anything
+	// shorter than period + airtime reads an occupied channel as empty some of the
+	// time.  See kSurveyConfirmDwellMs for the arithmetic and for the 1200 ms
+	// version's zero margin.
+	//
+	// A dwell also ENDS EARLY on a hit (ServiceLocatorSearch): the channel holds one
+	// hit slot, so once it is filled the rest of the dwell cannot learn anything more
+	// about this channel.  That is what keeps the longer dwell affordable -- a busy
+	// band now finishes faster than it did at 1200 ms, and only empty channels pay
+	// the full 1.4 s.  The survey's confirm phase deliberately does NOT do this: it
+	// COUNTS frames across the whole dwell, so leaving early would under-report how
+	// busy a channel is.
 	static constexpr uint32_t kSearchDwellMs = kSurveyConfirmDwellMs;
-	// Backstop for the whole run, sized for the widest case: 64 channels x 1.2 s is
-	// ~77 s, so this is that plus margin.  A run that hits it restores the radio and
-	// terminates the stream, rather than leaving the app waiting on a receiver that
-	// is quietly deaf.
-	static constexpr uint32_t kSearchDeadlineMs = 90000u;
+	// Backstop for the whole run, sized for the widest case: 64 channels x 1.4 s is
+	// ~90 s with nothing on air to cut a dwell short, so this is that plus margin.
+	// It must be raised whenever the dwell is -- at 90000 it would have fired on a
+	// legitimate empty-band run and reported it as RefusedBusy.  A run that hits it
+	// restores the radio and terminates the stream, rather than leaving the app
+	// waiting on a receiver that is quietly deaf.
+	static constexpr uint32_t kSearchDeadlineMs = 105000u;
+
+	/**
+	 * Is this app->locator message something the OPERATOR asked for?
+	 *
+	 * Only an operator command ends a running sweep, and only an operator command
+	 * stops one from starting.  The rule those two behaviours implement is about a
+	 * person pressing Arm and getting nothing (bench 2026-08-28) -- not about every
+	 * byte the app happens to have queued.
+	 *
+	 * `VersionRequest` is the app polling on a timer, and it is the message that
+	 * exposed this: the app re-requests versions on the RISING EDGE of the locator
+	 * link, a scan is >5 s of deafness, so **every scan long enough to matter makes
+	 * the app queue a version poll about a second after it ends**.  Start another
+	 * scan inside that window and it was cancelled instantly by housekeeping -- and
+	 * the app told the user "a command you sent to the locator did", which they had
+	 * not sent at all.  Reported 2026-08-30 running bench 6.
+	 *
+	 * A blacklist rather than a whitelist, deliberately: an unrecognised or newly
+	 * added message ends the sweep, which fails toward the operator.  Anything added
+	 * here must be something the app sends on its own initiative.
+	 */
+	static constexpr bool IsOperatorCommand(MsgType t) {
+		return t != MsgType::VersionRequest;
+	}
 
 	bool     search_active_ = false;
 	uint8_t  search_home_channel_ = 0;      // restored when the run ends or aborts

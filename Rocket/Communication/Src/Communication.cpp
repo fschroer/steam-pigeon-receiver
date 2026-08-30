@@ -486,6 +486,16 @@ void Communication::BeginChannelSurvey() {
 		survey_response_pending_ = true;
 		return;
 	}
+	// Same guard as BeginLocatorSearch, for the same reason -- see the long note
+	// there.  A survey started on top of a queued command is cancelled by
+	// ServicePendingTx on its first pass, which reads to the user as a scan that
+	// refused itself.
+	if (pending_tx_.ready && IsOperatorCommand(pending_tx_.msg.header.msg_type)) {
+		survey_status_ = ChannelSurveyStatus::RefusedBusy;
+		survey_response_pending_ = true;
+		SurveyTraceLine("refused pending command", 0, 0);
+		return;
+	}
 	// Enforce the refusals here rather than trusting the app's gate, which is
 	// soft (ADR-0006).  A sweep is deaf to the locator for ~1 s: harmless on the
 	// ground, lost telemetry in flight — and the channel cannot be changed in
@@ -790,8 +800,34 @@ void Communication::BeginLocatorSearch(const LocatorSearchRequest& req) {
 		RefuseLocatorSearch(LocatorSearchStatus::RefusedBusy);
 		return;
 	}
+	// A COMMAND FOR THE LOCATOR IS ALREADY WAITING for its forwarding window, so a
+	// sweep must not start on top of it.  ServicePendingTx ends a sweep the moment
+	// anything is queued (the ADR-0029 decision-7 abort), and that rule reads a
+	// message queued BEFORE the run as though the operator had just sent it -- so
+	// the run is cancelled on its very first service pass, before one channel is
+	// dwelt.  Reported 2026-08-30 as a search that "stops" if it is started the
+	// instant the previous one finishes.
+	//
+	// The window is wider than it looks, and this is why the symptom appears
+	// straight after a search rather than at random.  Forwarding is gated on the
+	// safe interval after the last PreLaunchData, and ProcessRadioRx counts and
+	// DROPS broadcasts during a sweep -- so last_locator_periodic_rx_ms_ is stale
+	// when a sweep ends, and anything queued stays latched until the locator's next
+	// broadcast, up to a full second later.  Waiting "a beat" is waiting for that
+	// broadcast.
+	//
+	// Refusing rather than deferring keeps the operator's command first, which is
+	// the whole point of the abort: a queued Arm goes out at the next window instead
+	// of waiting out a run that could be 90 s long.  With this guard in place, any
+	// pending_tx_ that ServicePendingTx sees during a run MUST have arrived during
+	// it, which is exactly the condition that rule was written for.
+	if (pending_tx_.ready && IsOperatorCommand(pending_tx_.msg.header.msg_type)) {
+		RefuseLocatorSearch(LocatorSearchStatus::RefusedBusy);
+		SearchTraceLine("refused pending command", 0, 0);
+		return;
+	}
 	// The same enforcement the survey has, against a worse version of the same
-	// hazard.  A survey is ~7 s of deafness; a whole-band search is ~77 s, so one
+	// hazard.  A survey is ~8 s of deafness; a whole-band search is up to ~90 s, so one
 	// running over a live flight would lose the entire descent.  App-side gating is
 	// soft (ADR-0006); this is the gate that actually holds.
 	if (locator_armed_ || locator_in_flight_) {
@@ -942,7 +978,13 @@ void Communication::ServiceLocatorSearch() {
 		return;
 	}
 
-	if (now - search_channel_start_ms_ < kSearchDwellMs)
+	// End the dwell early once the channel has answered.  There is ONE hit slot per
+	// channel and the first frame fills it, so the rest of the dwell cannot learn
+	// anything further about this channel -- it is time spent deaf for nothing.
+	// This is what pays for the longer dwell (kSurveyConfirmDwellMs): a band with
+	// locators on it now finishes FASTER than it did at 1200 ms, and only channels
+	// with nothing on them wait out the full 1.4 s.
+	if (!search_hit_ && now - search_channel_start_ms_ < kSearchDwellMs)
 		return;
 
 	const uint8_t total = search_whole_band_ ? kSurveyChannelCount : search_count_;
@@ -1004,7 +1046,10 @@ void Communication::ServicePendingTx() {
 	// ArmRequest pass through it.  Sent on the next poll rather than here, so the
 	// retune settles and every timing guard below still applies.
 	if (survey_active_ || search_active_) {
-		if (pending_tx_.ready) {
+		// Only an OPERATOR command ends a sweep -- see IsOperatorCommand.  The app's
+		// own version poll was cancelling scans, and blaming the user for it.
+		if (pending_tx_.ready &&
+				IsOperatorCommand(pending_tx_.msg.header.msg_type)) {
 			if (search_active_)
 				FinishLocatorSearch(LocatorSearchStatus::Cancelled);
 			if (survey_active_) {
