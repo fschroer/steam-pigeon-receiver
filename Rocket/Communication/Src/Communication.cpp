@@ -1351,6 +1351,38 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 		current_msg_.payload[cursor_++] = uart_char;
 		if (cursor_ >= message_length_) {
 			if (current_msg_.header.msg_type == MsgType::ReceiverCfgChgRequest) {
+				// A SCAN OWNS THE RADIO, AND THE OPERATOR'S COMMAND ENDS IT (#40).
+				//
+				// Applied underneath a running scan this retune is overwritten by the
+				// next dwell and then undone by the scan's home-restore, while
+				// SaveReceiverSettings below keeps the new value — radio and settings
+				// left on different channels.  Invisibly: both ReceiverInfo and the
+				// receiver_lora_channel stamped on every relayed frame are read from
+				// the settings, so the app is confidently wrong about where its own
+				// receiver points and nothing in the protocol can contradict it.
+				//
+				// This is not a new rule.  ServicePendingTx already ends a sweep for a
+				// queued OPERATOR COMMAND rather than letting it wait, because the
+				// operator's intent wins and because ending the sweep is what restores
+				// the radio and makes the command deliverable at all (ADR-0029). A
+				// receiver channel change is an operator command by every test that
+				// rule applies; it simply arrives receiver-local over BLE instead of
+				// through pending_tx_, which is how it missed the guard.
+				//
+				// Deferring instead was rejected: a whole-band run is up to ~90 s, and
+				// a tap that silently does nothing for that long is the failure the
+				// Communication screen was reorganised to eliminate.
+				//
+				// Cancel FIRST, then apply.  Each Finish* restores its own home channel
+				// and re-arms RX, so the assignment below lands last and the final state
+				// is identical to an ordinary channel change — which is the known-good
+				// path.  Both scans, because the survey has the identical hole.
+				if (search_active_)
+					FinishLocatorSearch(LocatorSearchStatus::Cancelled);
+				if (survey_active_) {
+					survey_status_ = ChannelSurveyStatus::Cancelled;
+					FinishChannelSurvey();
+				}
 				// Receiver config is handled locally; never forwarded to the locator.
 				RocketPersistentSettings &receiver_settings = archive_.GetReceiverSettings();
 				// Capture old name before overwriting so we can skip the BLE module reset
