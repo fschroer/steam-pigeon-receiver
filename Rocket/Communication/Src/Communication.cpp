@@ -448,6 +448,11 @@ void Communication::ServiceNoiseFloor() {
 		noise_floor_peak_ = rssi;
 }
 
+void Communication::ConfigTraceLine(const char* tag, int32_t a, int32_t b) {
+	StaticStringWriter<UART_LINE_MAX_LENGTH> line(&huart2_);
+	line.WriteMany("[cfg] ", tag, " ", a, " ", b, "\r\n");
+}
+
 void Communication::SurveyTraceLine(const char* tag, int32_t a, int32_t b) {
 	StaticStringWriter<UART_LINE_MAX_LENGTH> line(&huart2_);
 	line.WriteMany("[survey] ", tag, " ", a, " ", b, "\r\n");
@@ -1080,9 +1085,16 @@ void Communication::ServicePendingTx() {
 		// own version poll was cancelling scans, and blaming the user for it.
 		if (pending_tx_.ready &&
 				IsOperatorCommand(pending_tx_.msg.header.msg_type)) {
-			if (search_active_)
+			// The other cause of a Cancelled, and indistinguishable from the config
+			// change without this: the msg_type is what tells them apart.
+			if (search_active_) {
+				SearchTraceLine("cancelled for queued command",
+						static_cast<int32_t>(pending_tx_.msg.header.msg_type), 0);
 				FinishLocatorSearch(LocatorSearchStatus::Cancelled);
+			}
 			if (survey_active_) {
+				SurveyTraceLine("cancelled for queued command",
+						static_cast<int32_t>(pending_tx_.msg.header.msg_type), 0);
 				survey_status_ = ChannelSurveyStatus::Cancelled;
 				FinishChannelSurvey();
 			}
@@ -1376,9 +1388,17 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 				// and re-arms RX, so the assignment below lands last and the final state
 				// is identical to an ordinary channel change — which is the known-good
 				// path.  Both scans, because the survey has the identical hole.
-				if (search_active_)
+				// Say WHY, at both cancel sites.  A bare Cancelled tells the console a
+				// scan stopped and not what stopped it, and there are two causes that
+				// look identical from outside — a queued operator command, and this.
+				if (search_active_) {
+					SearchTraceLine("cancelled for receiver channel change",
+							static_cast<int32_t>(current_msg_.payload[0]), 0);
 					FinishLocatorSearch(LocatorSearchStatus::Cancelled);
+				}
 				if (survey_active_) {
+					SurveyTraceLine("cancelled for receiver channel change",
+							static_cast<int32_t>(current_msg_.payload[0]), 0);
 					survey_status_ = ChannelSurveyStatus::Cancelled;
 					FinishChannelSurvey();
 				}
@@ -1393,6 +1413,12 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 					receiver_settings.device_name[i] = current_msg_.payload[1 + i];
 				archive_.SaveReceiverSettings(receiver_settings);
 				SetChannel(receiver_settings.lora_channel);
+				// Printed AFTER the assignment, which is the whole point: a scan's
+				// restore line necessarily prints BEFORE this, so under the #40 fix it
+				// always reads old/old and can never show where the receiver ended up.
+				// This is the line that closes that gap — read the two together.
+				ConfigTraceLine("channel applied",
+						static_cast<int32_t>(receiver_settings.lora_channel), 0);
 				// Only reset the BLE module when the advertised name actually changed;
 				// the reset drops the active connection and delays channel confirmation.
 				if (std::memcmp(old_name, receiver_settings.device_name, device_name_length) != 0)

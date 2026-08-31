@@ -336,6 +336,11 @@ private:
 	// The search's counterpart, tagged [search] so a bench trace never leaves you
 	// guessing which of the two sweeps produced a line.
 	void SearchTraceLine(const char* tag, int32_t a, int32_t b);
+	// Receiver-config trace.  Its own prefix rather than [survey]/[search] because a
+	// channel change is neither, and because the one line that matters most is the one
+	// printed AFTER a scan's restore, where a [survey] prefix would read as part of
+	// the scan it just ended.
+	void ConfigTraceLine(const char* tag, int32_t a, int32_t b);
 
 	// ── Locator search (#33 follow-up) ────────────────────────────────────────
 	//
