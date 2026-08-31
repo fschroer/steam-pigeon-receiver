@@ -1020,6 +1020,22 @@ void Communication::ServiceLocatorSearch() {
 }
 
 void Communication::ServicePendingTx() {
+	// A forward that has waited past kPendingTxStaleMs is dropped: the flow that
+	// queued it has given up, and delivering it now is worse than not delivering
+	// it.  ADR-0011 found the shape of that harm — an undelivered
+	// LocatorCfgChgRequest sat here indefinitely and would fire whenever a locator
+	// was next heard, minutes later and against whatever channel the receiver had
+	// since been pointed at, out of the flow that queued it.
+	//
+	// Checked FIRST, ahead of the sweep-cancel below, so a message nobody is
+	// waiting on any more cannot end a scan on its way to being discarded.
+	//
+	// The FlightDataAck path cannot reach this limit legitimately: in profile mode
+	// it waits only kAckDeferMs (600 ms) past the end of the locator's burst.
+	if (pending_tx_.ready &&
+			HAL_GetTick() - pending_tx_.queued_ms >= kPendingTxStaleMs)
+		pending_tx_.ready = false;
+
 	// Never transmit while a survey or a search has the radio parked on another
 	// channel: the burst would go out on that frequency, so the locator would not
 	// hear it and whatever is on that channel would.
@@ -1074,6 +1090,17 @@ void Communication::ServicePendingTx() {
 			archive_.SaveReceiverSettings(receiver_settings);
 			SetChannel(pending_locator_channel_);
 		}
+		// Announce the move we made on our OWN initiative.  A ReceiverCfgChgRequest
+		// has always been answered with a ReceiverInfo; this follow was silent, and
+		// the app is the one thing that needed to hear about it.  Reaching here is
+		// proof the forward TRANSMITTED — the switch is armed only after Send() and
+		// applied only after TxDone plus the settle guard — so this message is the
+		// app's receipt that the channel change went on air, delivered over BLE
+		// where the noisy channel that motivated the move cannot eat it.  ADR-0011
+		// invariant 4 starts its confirm window from this, not from the BLE write:
+		// on a lossy channel the wait for a forwarding window used to spend the
+		// whole window before the command was even transmitted.
+		receiver_info_response_pending_ = true;
 	}
 
 	if (!pending_tx_.ready)
@@ -1295,6 +1322,7 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 					// timed forwarding to the locator.
 					pending_tx_.msg   = current_msg_;
 					pending_tx_.len   = message_length_;
+					pending_tx_.queued_ms = HAL_GetTick();
 					pending_tx_.ready = true;
 				}
 			}
@@ -1344,6 +1372,7 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 						sizeof(PacketHeader) + message_length_)) {
 					pending_tx_.msg   = current_msg_;
 					pending_tx_.len   = message_length_;
+					pending_tx_.queued_ms = HAL_GetTick();
 					pending_tx_.ready = true;
 				}
 			}

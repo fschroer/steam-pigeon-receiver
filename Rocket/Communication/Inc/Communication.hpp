@@ -464,6 +464,14 @@ private:
 	// so we do not send the ACK while the next burst packet is still arriving.
 	static constexpr uint32_t kAckDeferMs = 600u;
 
+	// How long a queued forward may wait for a TX window before it is dropped.
+	// A window opens within ~1 s of every PreLaunchData, so a wait past this means
+	// the locator is not being heard at all and the message has nowhere to go.
+	// Generous enough to outlast the app's own channel-change cycle (a ~5 s confirm
+	// window plus the ~2.8 s ADR-0011 probe) so a message is never dropped while
+	// the flow that queued it is still waiting on it.
+	static constexpr uint32_t kPendingTxStaleMs = 10000u;
+
 	// Single-slot outbound queue: one validated message waiting for a safe
 	// TX window.  Overwritten if a second message arrives before the first
 	// is sent (acceptable — ACKs are cumulative, requests are idempotent).
@@ -471,6 +479,7 @@ private:
 		AppMessage msg {};
 		uint8_t    len  = 0;
 		bool       ready = false;
+		uint32_t   queued_ms = 0;   // HAL_GetTick() when `ready` was set; see kPendingTxStaleMs
 	};
 	PendingTx pending_tx_;
 	uint32_t last_bt_tx_end_ms_ = 0;
