@@ -637,12 +637,6 @@ void Communication::FinishChannelSurvey() {
 	// happened to expire mid-sweep — the link would look dead for no visible
 	// reason (ADR-0019 Decision 6).
 	SetChannel(survey_home_channel_);
-	// Same pairing as the search's restore, for the same reason (#40): the survey
-	// owns the radio too, and a receiver channel change during one is undone here
-	// while the setting keeps it.
-	SurveyTraceLine("restored channel / setting",
-			static_cast<int32_t>(survey_home_channel_),
-			static_cast<int32_t>(archive_.GetReceiverSettings().lora_channel));
 	if (radio_ != nullptr)
 		radio_->Rx(kRxTimeoutMs);
 	// The noise-floor accumulator sampled other channels during the sweep, so its
@@ -651,7 +645,12 @@ void Communication::FinishChannelSurvey() {
 	survey_response_pending_ = true;
 	SurveyTraceLine("done status/ms", static_cast<int32_t>(survey_status_),
 			static_cast<int32_t>(HAL_GetTick() - survey_start_ms_));
-	SurveyTraceLine("restored channel", static_cast<int32_t>(survey_home_channel_), 0);
+	// Both values, as the search's restore prints them and for the same reason (#40):
+	// a mismatch between the channel restored and the channel the settings hold is the
+	// bug, and either alone cannot show it.
+	SurveyTraceLine("restored channel / setting",
+			static_cast<int32_t>(survey_home_channel_),
+			static_cast<int32_t>(archive_.GetReceiverSettings().lora_channel));
 }
 
 void Communication::ServiceBadFrameTrace() {
