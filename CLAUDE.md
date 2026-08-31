@@ -30,6 +30,14 @@ Locator repo to read its `docs/`.)
 - **Wire format / shared enums are hand-synced across firmware, app, and iOS.**
   Change all copies in the same session.
 
+## The `/sp-*` commands
+
+`.claude/commands/` here holds **pointers only**. The definitions live in
+`C:\STM32_Projects\Locator\.claude\commands\` and must not be copied — they encode
+rules the project learned the hard way, and two copies that can drift apart is the
+problem the pointers exist to avoid. `sp-commit` and `sp-handoff` act on the Locator
+repo's own files and should be run from there.
+
 ## Cross-repo work
 
 When a change spans repos (a wire-format or protocol change), commit all sides in the same
