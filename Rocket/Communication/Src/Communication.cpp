@@ -637,6 +637,12 @@ void Communication::FinishChannelSurvey() {
 	// happened to expire mid-sweep — the link would look dead for no visible
 	// reason (ADR-0019 Decision 6).
 	SetChannel(survey_home_channel_);
+	// Same pairing as the search's restore, for the same reason (#40): the survey
+	// owns the radio too, and a receiver channel change during one is undone here
+	// while the setting keeps it.
+	SurveyTraceLine("restored channel / setting",
+			static_cast<int32_t>(survey_home_channel_),
+			static_cast<int32_t>(archive_.GetReceiverSettings().lora_channel));
 	if (radio_ != nullptr)
 		radio_->Rx(kRxTimeoutMs);
 	// The noise-floor accumulator sampled other channels during the sweep, so its
@@ -920,7 +926,16 @@ void Communication::FinishLocatorSearch(LocatorSearchStatus status) {
 	search_terminator_pending_ = true;
 	SearchTraceLine("done status/ms", static_cast<int32_t>(status),
 			static_cast<int32_t>(HAL_GetTick() - search_start_ms_));
-	SearchTraceLine("restored channel", static_cast<int32_t>(search_home_channel_), 0);
+	// BOTH values, because a mismatch between them is the whole of #40: a receiver
+	// channel change applied while this run owned the radio is overwritten by the
+	// next dwell and then undone here, while the persisted setting keeps the new
+	// value — leaving the radio and the settings on different channels, invisibly,
+	// since everything the app reads (ReceiverInfo, and the channel stamped on each
+	// relayed frame) comes from the settings.  Printing one of the two could not
+	// show that, which is why the split had to be reasoned about rather than seen.
+	SearchTraceLine("restored channel / setting",
+			static_cast<int32_t>(search_home_channel_),
+			static_cast<int32_t>(archive_.GetReceiverSettings().lora_channel));
 }
 
 void Communication::SendSearchResult(LocatorSearchStatus status, uint8_t channel,
