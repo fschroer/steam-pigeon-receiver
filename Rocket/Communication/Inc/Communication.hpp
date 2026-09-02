@@ -320,6 +320,7 @@ private:
 	void BeginChannelSurvey();
 	void BeginSurveyConfirmPhase();  // shortlists the quietest coarse candidates
 	void FinishChannelSurvey();      // restores channel + RX and queues the response
+	void CancelChannelSurvey();      // operator abort: same restore, Cancelled status
 
 	// USB-C console trace, so a misbehaving sweep can be diagnosed from the bench
 	// instead of by inference.  Emitted only at phase boundaries, never inside a

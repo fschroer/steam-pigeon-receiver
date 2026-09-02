@@ -41,7 +41,16 @@ enum class MsgType : uint8_t {
 	ChannelSurvey = 21,         // Response from the receiver with per-channel occupancy.
 	PadAlertSnoozeRequest = 22, // App→locator: suppress the prepped-and-disarmed alert for N minutes (#37).
 	LocatorSearchRequest = 23,  // Request from the app to the receiver to listen for locators on named channels (no locator involved).
-	LocatorSearchResult = 24    // Streamed response: one per channel searched, plus a terminator.
+	LocatorSearchResult = 24,   // Streamed response: one per channel searched, plus a terminator.
+	// Stop a sweep in progress.  A message of its own rather than a flag on
+	// ChannelSurveyRequest, which is the shape the locator search uses: that
+	// request already carried a payload, whereas ChannelSurveyRequest is
+	// header-only and asserted so below.  Payload length here is derived from
+	// msg_type alone -- there is no length field on the wire -- so growing the
+	// survey request would desync a receiver that predates the change on the
+	// ORDINARY scan, not just on a cancel.  A new type leaves that path
+	// untouched: old firmware fails this frame's CRC, resets, and keeps sweeping.
+	ChannelSurveyCancelRequest = 25
 };
 
 // Flight event summary indices — wire order of FlightEventsMessage::event_timestamp_ms.
@@ -193,6 +202,17 @@ struct ChannelSurveyRequest {
 	PacketHeader packet_header;
 };
 
+// Stop a sweep already in progress, so the receiver is listening on the home
+// channel again within a poll instead of at the end of the ~8 s sweep.  Also
+// header-only: which sweep to stop is never in question, there is only ever one.
+//
+// Answered even when nothing is running -- the app cannot tell silence apart
+// from firmware that has never heard of this message, which is the same reason
+// the locator search answers a cancel it had nothing to cancel.
+struct ChannelSurveyCancelRequest {
+	PacketHeader packet_header;
+};
+
 struct ChannelSurveyResponse {
 	PacketHeader packet_header;
 	uint8_t status;         // ChannelSurveyStatus; levels are meaningless unless Ok
@@ -306,6 +326,7 @@ static_assert(sizeof(TelemetryMessageExtended) ==  83,
 // Channel survey (ADR-0019 tier 3).  Receiver-only messages; the locator reserves
 // the MsgType values but never sends or parses these.
 static_assert(sizeof(ChannelSurveyRequest)  ==  6, "ChannelSurveyRequest is header-only");
+static_assert(sizeof(ChannelSurveyCancelRequest) == 6, "ChannelSurveyCancelRequest is header-only");
 static_assert(sizeof(ChannelSurveyResponse) == 104,
 		"ChannelSurveyResponse size changed — sync the app's CHANNEL_SURVEY_PAYLOAD_SIZE (98)");
 

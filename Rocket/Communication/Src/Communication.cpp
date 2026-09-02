@@ -658,6 +658,27 @@ void Communication::FinishChannelSurvey() {
 			static_cast<int32_t>(archive_.GetReceiverSettings().lora_channel));
 }
 
+void Communication::CancelChannelSurvey() {
+	// Answer even with nothing running.  Silence is the one reply the app cannot
+	// tell apart from a receiver whose firmware predates this message, and it
+	// would sit on "Scanning..." until its own timeout for no reason.  Same
+	// reasoning as RefuseLocatorSearch on an idle cancel.
+	if (!survey_active_) {
+		SurveyTraceLine("cancel with no sweep running", 0, 0);
+		survey_status_ = ChannelSurveyStatus::Cancelled;
+		survey_response_pending_ = true;
+		return;
+	}
+	// Third cause of a Cancelled, and the only one the operator asked for. Traced
+	// distinctly for the reason the other two are: the status byte is identical on
+	// the wire, so the console line is what tells them apart afterwards.
+	SurveyTraceLine("cancelled by operator", 0, 0);
+	survey_status_ = ChannelSurveyStatus::Cancelled;
+	// Restores the home channel and re-arms RX, which is the whole point of the
+	// request -- not merely bookkeeping to stop the sweep loop.
+	FinishChannelSurvey();
+}
+
 void Communication::ServiceBadFrameTrace() {
 	// One line per second while frames are failing, whether or not anything is
 	// getting through.  This is the console counterpart of the red LED: each red
@@ -1306,6 +1327,9 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 		case MsgType::ChannelSurveyRequest:
 			message_length_ = 0;
 			break;
+		case MsgType::ChannelSurveyCancelRequest:
+			message_length_ = 0;
+			break;
 		case MsgType::LocatorSearchRequest:
 			message_length_ = sizeof(LocatorSearchRequest) - sizeof(PacketHeader);
 			break;
@@ -1339,6 +1363,12 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 				if (current_msg_.header.msg_type == MsgType::ReceiverInfoRequest) {
 					// Handled locally — queue a BLE response, never forward to locator.
 					receiver_info_response_pending_ = true;
+				} else if (current_msg_.header.msg_type == MsgType::ChannelSurveyCancelRequest) {
+					// Receiver-local like the survey it stops.  Handled here rather than
+					// through pending_tx_ so it takes effect on the next poll: the point
+					// of the cancel is to end the deafness NOW, and a cancel that waited
+					// for the sweep to reach a convenient boundary would deliver nothing.
+					CancelChannelSurvey();
 				} else if (current_msg_.header.msg_type == MsgType::ChannelSurveyRequest) {
 					// Also receiver-local: the locator plays no part in a survey and
 					// must never see this message.
