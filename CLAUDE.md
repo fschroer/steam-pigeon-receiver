@@ -38,6 +38,39 @@ rules the project learned the hard way, and two copies that can drift apart is t
 problem the pointers exist to avoid. `sp-commit` and `sp-handoff` act on the Locator
 repo's own files and should be run from there.
 
+## The pre-commit hook
+
+`.githooks/pre-commit` runs `Scripts/check-wire-format.sh` before any commit that stages a
+`.c/.cpp/.h/.hpp`, and refuses the commit if it fails. Tracked, so **each clone installs it
+once**:
+
+```
+git config core.hooksPath .githooks
+```
+
+It skips instantly for docs-only commits; `git commit --no-verify` is the deliberate escape.
+
+**What it checks.** Every header under `Rocket/` carrying a `static_assert` is compiled as
+its own translation unit, syntax-only, with the real target compiler and the real build's
+defines (`-DSTM32WL5Mxx -DCORE_CM4 -DUSE_HAL_DRIVER`, read out of `Debug/**/subdir.mk`
+rather than guessed). 23 assertions, about a second. Headers are **discovered**, not listed,
+so one added tomorrow is guarded tomorrow.
+
+**Why it exists.** The wire format is defined by hand in four places — the locator's
+`MessageProtocol.hpp`, this repo's copy, `WireLayoutTest.kt` and `WireLayoutTests.swift` —
+and a mismatch is not a compile error anywhere. It is a rocket whose telemetry decodes into
+the wrong fields. The `static_assert`s were already the guard; they simply never fired
+anywhere convenient, because only a full firmware build ran them and that needs the CubeIDE
+toolchain plus an IDE-refreshed `Debug/` tree.
+
+**A green run does not mean the firmware works.** Nothing is linked and nothing runs on the
+MCU. It proves only that the asserted sizes and offsets still hold under the target
+compiler — which is the whole of what those asserts claim.
+
+The locator needs no equivalent: its `check-bench-flags.sh` compiles files that reach
+`MessageProtocol.hpp`, so its asserts already fire there (verified 2026-09-04 by perturbing
+`sizeof(TelemetryData)` and watching that hook refuse).
+
 ## Cross-repo work
 
 When a change spans repos (a wire-format or protocol change), commit all sides in the same

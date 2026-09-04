@@ -1,0 +1,76 @@
+#!/usr/bin/env sh
+# pre-commit — fire the wire-format static_asserts before a firmware commit.
+#
+# Third of three. The app repo runs its unit suite
+# (rocket-flight-manager 423b710); the locator runs its bench-flag check and the
+# host C++ suites (steam-pigeon-locator 32a5b7d); this repo has neither a test
+# suite nor bench flags, so for a while it was going to get nothing.
+#
+# What it does have is the receiver's copy of the wire format, and that is the
+# single highest-risk file in the system: the layout is defined BY HAND in four
+# places — the locator's MessageProtocol.hpp, this one, WireLayoutTest.kt and
+# WireLayoutTests.swift — and a mismatch is not a compile error anywhere. It is
+# a rocket whose telemetry decodes into the wrong fields.
+#
+# The static_asserts already guard it. They just never fired anywhere convenient:
+# only a full firmware build ran them, and that needs the CubeIDE toolchain plus
+# an IDE-refreshed Debug/ tree. Scripts/check-wire-format.sh runs them in about a
+# second with no objects, no linking and no makefile.
+#
+# Install once per clone (tracked, so .git/hooks/ would not survive one):
+#
+#     git config core.hooksPath .githooks
+#
+# Bypass with `git commit --no-verify`.
+#
+# WHY THE LOCATOR HAS NO EQUIVALENT SCRIPT: its check-bench-flags.sh compiles
+# Communication.cpp and Factory.cpp, which reach MessageProtocol.hpp through
+# Communication.hpp — so its asserts already fire there. Verified 2026-09-04 by
+# perturbing sizeof(TelemetryData) and watching that hook refuse. Adding a second
+# checker there would be a second thing to keep in step for no extra coverage.
+#
+# WHAT A GREEN RUN DOES NOT MEAN: nothing is linked and nothing runs on the MCU.
+# It proves the sizes and offsets the headers assert still hold under the real
+# target compiler — which is the whole of what those asserts claim, and is
+# exactly the drift that silently breaks a flight. It says nothing about whether
+# the firmware works.
+
+set -e
+
+cd "$(git rev-parse --show-toplevel)"
+
+# --- Only pay the cost when C/C++ changed ------------------------------------
+#
+# A docs-only commit must not wait. A hook that taxes every commit gets bypassed
+# by reflex, and then it guards nothing.
+STAGED=$(git diff --cached --name-only --diff-filter=ACMR)
+if ! printf '%s\n' "$STAGED" | grep -qE '\.(c|cpp|h|hpp)$'; then
+  exit 0
+fi
+
+echo "pre-commit: checking wire-format assertions..."
+
+# Exit 2 means the toolchain is missing rather than the check failing, and the
+# two deserve different words: one is "your commit is wrong", the other is "this
+# machine cannot tell". Both still refuse — a code commit that could not be
+# checked is exactly what this exists to stop going by unnoticed.
+set +e
+out=$(sh Scripts/check-wire-format.sh 2>&1)
+rc=$?
+set -e
+
+if [ "$rc" -eq 0 ]; then
+  printf '%s\n' "$out" | tail -1
+  exit 0
+fi
+
+printf '%s\n' "$out" >&2
+echo "" >&2
+if [ "$rc" -eq 2 ]; then
+  echo "pre-commit: could not run the check (no ARM toolchain) — commit refused." >&2
+  echo "            Set ARM_GXX=/path/to/arm-none-eabi-g++, or: git commit --no-verify" >&2
+else
+  echo "pre-commit: WIRE-FORMAT CHECK FAILED — commit refused." >&2
+  echo "            Deliberate, mid-migration? git commit --no-verify" >&2
+fi
+exit 1
