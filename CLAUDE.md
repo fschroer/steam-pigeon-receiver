@@ -76,3 +76,9 @@ The locator needs no equivalent: its `check-bench-flags.sh` compiles files that 
 When a change spans repos (a wire-format or protocol change), commit all sides in the same
 session with cross-referenced hashes. `C:\STM32_Projects\Locator\Scripts\sp-status.sh`
 reports commit/push state across all three repos.
+
+## Spelling
+
+US English in docs, UI strings, spoken and accessibility text, comments and commit messages
+(meter, color, center, gray, canceled, initialize). Never respell an identifier. The full rule
+is in `C:\STM32_Projects\Locator\CLAUDE.md` ("Spelling: US English").
