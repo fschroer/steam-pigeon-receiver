@@ -274,8 +274,10 @@ private:
 	// its locator came down to where that locator's 1 Hz phase happened to land.
 	// Reported as a search that "sometimes misses one of the locators".
 	//
-	// 1400 ms restores 200 ms of margin, which covers the locator's 20 Hz service
-	// tick (50 ms of scheduling granularity on the send instant) several times over.
+	// 1400 ms restores 200 ms of margin, which covers the locator's service tick
+	// (50 ms of scheduling granularity on the send instant at 20 Hz, 20 ms since
+	// the 50 Hz loop of the locator ADR "50 Hz loop, variable-rate archive and
+	// magnetometer") several times over.
 	// If the broadcast grows again, this must grow with it -- the requirement is
 	// period + airtime + jitter, not a round number.
 	static constexpr uint32_t kSurveyConfirmDwellMs = 1400u;
