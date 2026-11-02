@@ -59,7 +59,11 @@ enum class MsgType : uint8_t {
 	FullRecordRequest = 26,     // App→locator: send page N of a record (0xFFFF stops).
 	FullRecordData = 27,        // Locator→app: one packet of a page.
 	FullRecordParity = 28,      // Locator→app: XOR of up to four data packets.
-	FullRecordAck = 29          // App→locator: bitmap of the page's packets received.
+	FullRecordAck = 29,         // App→locator: bitmap of the page's packets received.
+	// App→locator: start or cancel a simulated flight the locator computes
+	// (locator ADR "An app-started simulated flight computed on the locator",
+	// 0041).  Relayed like any operator command, in pending_tx_.
+	SimFlightRequest = 30
 };
 
 // Flight event summary indices — wire order of FlightEventsMessage::event_timestamp_ms.
@@ -294,7 +298,7 @@ struct FlightMetadata {
 struct FlightEventsMessage {
 	PacketHeader packet_header;
 	uint8_t  record;
-	uint8_t  reserved;
+	uint8_t  flags;              // bit 0: a simulated flight (locator ADR-0041); was reserved
 	uint16_t present_mask;
 	uint32_t flight_timestamp_s;
 	uint32_t event_timestamp_ms[kFlightEventCount];
@@ -447,9 +451,28 @@ struct FullRecordAck {
 static_assert(sizeof(FullRecordRequest) == 14, "FullRecordRequest size changed — sync locator + app + iOS");
 static_assert(sizeof(FullRecordPacketHeader) == 25, "FullRecordPacketHeader size changed — sync locator + app + iOS");
 static_assert(sizeof(FullRecordAck) == 50, "FullRecordAck size changed — sync locator + app + iOS");
+// Mirrored from the locator's copy (ADR-0041); sized and relayed, never read.
+struct SimFlightRequest {
+	PacketHeader packet_header;
+	uint32_t target_locator_id;
+	uint16_t apogee_m;
+	int32_t  origin_lat_1e7;
+	int32_t  origin_lon_1e7;
+	uint16_t wind_from_deg;
+	uint16_t seed;
+	uint8_t  action;
+	uint8_t  burn_ds;
+	uint8_t  drogue_mps;
+	uint8_t  main_dmps;
+	uint8_t  wind_mps;
+	uint8_t  reserved;
+};
+static_assert(sizeof(SimFlightRequest) == 30, "SimFlightRequest size changed — sync locator + app + iOS");
 // Bit 7 of TelemetryData::physical_deployment_stats: picked up after landing.
 // Relayed untouched; named here so the three copies agree on it.
 static constexpr uint8_t kTelemetryPickedUpBit = 0x80u;
+// Bit 6: the locator is flying an app-started simulated flight (ADR-0041).
+static constexpr uint8_t kTelemetrySimulatedBit = 0x40u;
 
 // ── Addressed app→locator commands (ADR-0020, #34) ──────────────────────────
 // Mirrored from the locator's copy.  The receiver never inspects the target — it
