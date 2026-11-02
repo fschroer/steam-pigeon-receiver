@@ -50,7 +50,16 @@ enum class MsgType : uint8_t {
 	// survey request would desync a receiver that predates the change on the
 	// ORDINARY scan, not just on a cancel.  A new type leaves that path
 	// untouched: old firmware fails this frame's CRC, resets, and keeps sweeping.
-	ChannelSurveyCancelRequest = 25
+	ChannelSurveyCancelRequest = 25,
+	// Paged full-record transfer (locator ADR "The radio download becomes the
+	// primary data path").  Relayed both ways; the receiver never decodes the
+	// payload.  FullRecordRequest and FullRecordAck travel in their own forward
+	// slot (pending_xfer_), so a background transfer's ACK can never overwrite
+	// an operator command waiting in pending_tx_.
+	FullRecordRequest = 26,     // App→locator: send page N of a record (0xFFFF stops).
+	FullRecordData = 27,        // Locator→app: one packet of a page.
+	FullRecordParity = 28,      // Locator→app: XOR of up to four data packets.
+	FullRecordAck = 29          // App→locator: bitmap of the page's packets received.
 };
 
 // Flight event summary indices — wire order of FlightEventsMessage::event_timestamp_ms.
@@ -404,6 +413,43 @@ struct FlightDataPacket {
 	uint32_t total_samples; // total samples in transfer
 	uint8_t payload[kPayloadSize]; // Compressed payload bytes
 };
+
+// ── Paged full-record transfer — mirrored from the locator's copy ─────────────
+// Layouts only: the receiver sizes and relays these, it does not interpret them.
+struct FullRecordRequest {
+	PacketHeader packet_header;
+	uint32_t target_locator_id;
+	uint16_t page;
+	uint8_t  record;
+	uint8_t  reserved;
+};
+struct FullRecordPacketHeader {
+	PacketHeader packet_header;
+	uint32_t record_crc;
+	uint32_t total_samples;
+	uint16_t page;
+	uint16_t packet_count;
+	uint8_t  packet_index;
+	uint8_t  parity_mask;
+	uint16_t first_in_page;
+	uint8_t  sample_count;
+	uint8_t  payload_len;
+	uint8_t  record;
+};
+struct FullRecordAck {
+	PacketHeader packet_header;
+	uint32_t target_locator_id;
+	uint32_t record_crc;
+	uint16_t page;
+	uint16_t packet_count;
+	uint8_t  bitmap[32];
+};
+static_assert(sizeof(FullRecordRequest) == 14, "FullRecordRequest size changed — sync locator + app + iOS");
+static_assert(sizeof(FullRecordPacketHeader) == 25, "FullRecordPacketHeader size changed — sync locator + app + iOS");
+static_assert(sizeof(FullRecordAck) == 50, "FullRecordAck size changed — sync locator + app + iOS");
+// Bit 7 of TelemetryData::physical_deployment_stats: picked up after landing.
+// Relayed untouched; named here so the three copies agree on it.
+static constexpr uint8_t kTelemetryPickedUpBit = 0x80u;
 
 // ── Addressed app→locator commands (ADR-0020, #34) ──────────────────────────
 // Mirrored from the locator's copy.  The receiver never inspects the target — it

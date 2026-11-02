@@ -490,6 +490,14 @@ private:
 		uint32_t   queued_ms = 0;   // HAL_GetTick() when `ready` was set; see kPendingTxStaleMs
 	};
 	PendingTx pending_tx_;
+	// The full-record transfer's FullRecordAck / FullRecordRequest, latest wins
+	// (both are cumulative).  Kept apart from pending_tx_ so they never displace
+	// an operator command; served after it, see ServicePendingTransferTx().
+	PendingTx pending_xfer_;
+	// HAL_GetTick() at our last forward's Send(), so the transfer slot can wait
+	// for that TX to finish (radio_busy_ is never set on this firmware's TX path).
+	uint32_t last_forward_start_ms_ = 0;
+	void ServicePendingTransferTx();
 	uint32_t last_bt_tx_end_ms_ = 0;
 	bool bt_tx_led_status_serviced_ = true;
 	uint32_t last_bt_rx_end_ms_ = 0;
