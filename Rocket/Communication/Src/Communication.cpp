@@ -1386,8 +1386,11 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 		case MsgType::SimFlightRequest:
 			message_length_ = sizeof(SimFlightRequest) - sizeof(PacketHeader);   // ADR-0041
 			break;
+		case MsgType::SimFlightStart:
+			message_length_ = sizeof(SimFlightStart) - sizeof(PacketHeader);     // ADR-0041 amendment
+			break;
 		}
-		if (message_length_ > 64) { // Safety check
+		if (message_length_ > sizeof(current_msg_.payload)) { // Safety check
 			Reset();
 		} else {
 			parse_state_ = ParseState::COUNT1;

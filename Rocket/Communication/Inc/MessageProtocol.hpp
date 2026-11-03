@@ -62,8 +62,12 @@ enum class MsgType : uint8_t {
 	FullRecordAck = 29,         // App→locator: bitmap of the page's packets received.
 	// App→locator: start or cancel a simulated flight the locator computes
 	// (locator ADR "An app-started simulated flight computed on the locator",
-	// 0041).  Relayed like any operator command, in pending_tx_.
-	SimFlightRequest = 30
+	// 0041).  Relayed like any operator command, in pending_tx_.  Since the
+	// 2026-11-03 amendment it only cancels.
+	SimFlightRequest = 30,
+	// App→locator: start a simulated flight from a rocket profile (ADR-0041
+	// amendment).  196 B, the largest app command; relayed in pending_tx_.
+	SimFlightStart = 31
 };
 
 // Flight event summary indices — wire order of FlightEventsMessage::event_timestamp_ms.
@@ -468,6 +472,36 @@ struct SimFlightRequest {
 	uint8_t  reserved;
 };
 static_assert(sizeof(SimFlightRequest) == 30, "SimFlightRequest size changed — sync locator + app + iOS");
+// Mirrored from the locator's copy (ADR-0041 amendment); sized and relayed,
+// never read.
+struct SimFlightStart {
+	PacketHeader packet_header;
+	uint32_t target_locator_id;
+	int32_t  origin_lat_1e7;
+	int32_t  origin_lon_1e7;
+	uint16_t seed;
+	uint16_t wind_from_deg;
+	uint16_t launch_az_deg;
+	uint16_t rail_len_cm;
+	uint8_t  rail_angle_ddeg;
+	uint8_t  wind_mps;
+	uint8_t  drogue_mps;
+	uint8_t  main_dmps;
+	int8_t   temp_c;
+	uint8_t  n_points;
+	float    peak_thrust_n;
+	float    motor_loaded_kg;
+	float    motor_prop_kg;
+	float    dry_mass_kg;
+	float    ref_diameter_m;
+	uint16_t cd_milli[8];
+	uint16_t t_ms[32];
+	uint16_t thrust_frac[32];
+};
+static_assert(sizeof(SimFlightStart) == 196, "SimFlightStart size changed — sync locator + app + iOS");
+static_assert(offsetof(SimFlightStart, peak_thrust_n) == 32, "SimFlightStart offsets changed — sync locator + app + iOS");
+static_assert(offsetof(SimFlightStart, t_ms) == 68, "SimFlightStart offsets changed — sync locator + app + iOS");
+static_assert(offsetof(SimFlightStart, thrust_frac) == 132, "SimFlightStart offsets changed — sync locator + app + iOS");
 // Bit 7 of TelemetryData::physical_deployment_stats: picked up after landing.
 // Relayed untouched; named here so the three copies agree on it.
 static constexpr uint8_t kTelemetryPickedUpBit = 0x80u;
@@ -516,8 +550,13 @@ struct ParsedMessage {
 
 struct AppMessage {
 	PacketHeader header;
-	uint8_t payload[64];
+	// The largest app command is SimFlightStart (190 B after the header); this
+	// was 64 until it arrived.  Every app command must fit, or the parser
+	// drops it: see the static_assert below.
+	uint8_t payload[kMaxPayloadBytes - sizeof(PacketHeader)];
 };
+static_assert(sizeof(SimFlightStart) - sizeof(PacketHeader) <= sizeof(AppMessage::payload),
+              "the largest app command must fit the parser's buffer");
 
 struct LocatorRocketSettings {
 	PacketHeader header;
