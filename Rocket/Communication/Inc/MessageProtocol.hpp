@@ -66,7 +66,7 @@ enum class MsgType : uint8_t {
 	// 2026-11-03 amendment it only cancels.
 	SimFlightRequest = 30,
 	// App→locator: start a simulated flight from a rocket profile (ADR-0041
-	// amendment).  196 B, the largest app command; relayed in pending_tx_.
+	// amendment).  199 B, the largest app command; relayed in pending_tx_.
 	SimFlightStart = 31
 };
 
@@ -497,11 +497,15 @@ struct SimFlightStart {
 	uint16_t cd_milli[8];
 	uint16_t t_ms[32];
 	uint16_t thrust_frac[32];
+	uint16_t length_mm;          // added 2026-11-03
+	uint8_t  stability_dcal;
 };
-static_assert(sizeof(SimFlightStart) == 196, "SimFlightStart size changed — sync locator + app + iOS");
+static_assert(sizeof(SimFlightStart) == 199, "SimFlightStart size changed — sync locator + app + iOS");
 static_assert(offsetof(SimFlightStart, peak_thrust_n) == 32, "SimFlightStart offsets changed — sync locator + app + iOS");
 static_assert(offsetof(SimFlightStart, t_ms) == 68, "SimFlightStart offsets changed — sync locator + app + iOS");
 static_assert(offsetof(SimFlightStart, thrust_frac) == 132, "SimFlightStart offsets changed — sync locator + app + iOS");
+static_assert(offsetof(SimFlightStart, length_mm) == 196, "SimFlightStart offsets changed — sync locator + app + iOS");
+static_assert(offsetof(SimFlightStart, stability_dcal) == 198, "SimFlightStart offsets changed — sync locator + app + iOS");
 // Bit 7 of TelemetryData::physical_deployment_stats: picked up after landing.
 // Relayed untouched; named here so the three copies agree on it.
 static constexpr uint8_t kTelemetryPickedUpBit = 0x80u;
@@ -550,7 +554,7 @@ struct ParsedMessage {
 
 struct AppMessage {
 	PacketHeader header;
-	// The largest app command is SimFlightStart (190 B after the header); this
+	// The largest app command is SimFlightStart (193 B after the header); this
 	// was 64 until it arrived.  Every app command must fit, or the parser
 	// drops it: see the static_assert below.
 	uint8_t payload[kMaxPayloadBytes - sizeof(PacketHeader)];
