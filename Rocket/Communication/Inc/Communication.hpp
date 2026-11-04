@@ -523,6 +523,13 @@ private:
 	// 50 ms mark still leaves the ACK (~100 ms on air) clear of the locator's
 	// 900 ms listen gap.
 	static constexpr uint32_t kAfterCommandMs = 300u;
+	// The noise-floor sampler waits longer after a command than a transfer frame
+	// does, since a missed sample costs nothing.  The longest prompt reply is the
+	// 96-byte FlightMetadata: sent >50 ms after the request and ~160 ms on air, it
+	// ends ~250 ms or more after our TxDone, at the edge of kAfterCommandMs.  The
+	// bench (2026-11-04) showed two -16 dBm samples, the locator's own RSSI, as a
+	// download fetched the flight list.
+	static constexpr uint32_t kAfterCommandNoiseMs = 600u;
 	void ServicePendingTransferTx();
 	uint32_t last_bt_tx_end_ms_ = 0;
 	bool bt_tx_led_status_serviced_ = true;

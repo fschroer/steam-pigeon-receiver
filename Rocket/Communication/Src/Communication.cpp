@@ -471,8 +471,9 @@ void Communication::ServiceNoiseFloor() {
 	if (!in_safe_window && !overdue)
 		return;
 	// Nor while the locator may be answering a command we just forwarded: a
-	// VersionInfo reply lands inside the safe window (see kAfterCommandMs).
-	if (last_forward_was_command_ && now - last_radio_tx_end_ms_ < kAfterCommandMs)
+	// VersionInfo or FlightMetadata reply lands inside the safe window (see
+	// kAfterCommandNoiseMs).
+	if (last_forward_was_command_ && now - last_radio_tx_end_ms_ < kAfterCommandNoiseMs)
 		return;
 	if (now - last_noise_sample_ms_ < kNoiseSampleIntervalMs)
 		return;
