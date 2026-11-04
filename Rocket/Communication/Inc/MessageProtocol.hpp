@@ -50,7 +50,24 @@ enum class MsgType : uint8_t {
 	// survey request would desync a receiver that predates the change on the
 	// ORDINARY scan, not just on a cancel.  A new type leaves that path
 	// untouched: old firmware fails this frame's CRC, resets, and keeps sweeping.
-	ChannelSurveyCancelRequest = 25
+	ChannelSurveyCancelRequest = 25,
+	// Paged full-record transfer (locator ADR "The radio download becomes the
+	// primary data path").  Relayed both ways; the receiver never decodes the
+	// payload.  FullRecordRequest and FullRecordAck travel in their own forward
+	// slot (pending_xfer_), so a background transfer's ACK can never overwrite
+	// an operator command waiting in pending_tx_.
+	FullRecordRequest = 26,     // App→locator: send page N of a record (0xFFFF stops).
+	FullRecordData = 27,        // Locator→app: one packet of a page.
+	FullRecordParity = 28,      // Locator→app: XOR of up to four data packets.
+	FullRecordAck = 29,         // App→locator: bitmap of the page's packets received.
+	// App→locator: start or cancel a simulated flight the locator computes
+	// (locator ADR "An app-started simulated flight computed on the locator",
+	// 0041).  Relayed like any operator command, in pending_tx_.  Since the
+	// 2026-11-03 amendment it only cancels.
+	SimFlightRequest = 30,
+	// App→locator: start a simulated flight from a rocket profile (ADR-0041
+	// amendment).  199 B, the largest app command; relayed in pending_tx_.
+	SimFlightStart = 31
 };
 
 // Flight event summary indices — wire order of FlightEventsMessage::event_timestamp_ms.
@@ -285,7 +302,7 @@ struct FlightMetadata {
 struct FlightEventsMessage {
 	PacketHeader packet_header;
 	uint8_t  record;
-	uint8_t  reserved;
+	uint8_t  flags;              // bit 0: a simulated flight (locator ADR-0041); was reserved
 	uint16_t present_mask;
 	uint32_t flight_timestamp_s;
 	uint32_t event_timestamp_ms[kFlightEventCount];
@@ -405,6 +422,96 @@ struct FlightDataPacket {
 	uint8_t payload[kPayloadSize]; // Compressed payload bytes
 };
 
+// ── Paged full-record transfer — mirrored from the locator's copy ─────────────
+// Layouts only: the receiver sizes and relays these, it does not interpret them.
+struct FullRecordRequest {
+	PacketHeader packet_header;
+	uint32_t target_locator_id;
+	uint16_t page;
+	uint8_t  record;
+	uint8_t  reserved;
+};
+struct FullRecordPacketHeader {
+	PacketHeader packet_header;
+	uint32_t record_crc;
+	uint32_t total_samples;
+	uint16_t page;
+	uint16_t packet_count;
+	uint8_t  packet_index;
+	uint8_t  parity_mask;
+	uint16_t first_in_page;
+	uint8_t  sample_count;
+	uint8_t  payload_len;
+	uint8_t  record;
+};
+struct FullRecordAck {
+	PacketHeader packet_header;
+	uint32_t target_locator_id;
+	uint32_t record_crc;
+	uint16_t page;
+	uint16_t packet_count;
+	uint8_t  bitmap[32];
+};
+static_assert(sizeof(FullRecordRequest) == 14, "FullRecordRequest size changed — sync locator + app + iOS");
+static_assert(sizeof(FullRecordPacketHeader) == 25, "FullRecordPacketHeader size changed — sync locator + app + iOS");
+static_assert(sizeof(FullRecordAck) == 50, "FullRecordAck size changed — sync locator + app + iOS");
+// Mirrored from the locator's copy (ADR-0041); sized and relayed, never read.
+struct SimFlightRequest {
+	PacketHeader packet_header;
+	uint32_t target_locator_id;
+	uint16_t apogee_m;
+	int32_t  origin_lat_1e7;
+	int32_t  origin_lon_1e7;
+	uint16_t wind_from_deg;
+	uint16_t seed;
+	uint8_t  action;
+	uint8_t  burn_ds;
+	uint8_t  drogue_mps;
+	uint8_t  main_dmps;
+	uint8_t  wind_mps;
+	uint8_t  reserved;
+};
+static_assert(sizeof(SimFlightRequest) == 30, "SimFlightRequest size changed — sync locator + app + iOS");
+// Mirrored from the locator's copy (ADR-0041 amendment); sized and relayed,
+// never read.
+struct SimFlightStart {
+	PacketHeader packet_header;
+	uint32_t target_locator_id;
+	int32_t  origin_lat_1e7;
+	int32_t  origin_lon_1e7;
+	uint16_t seed;
+	uint16_t wind_from_deg;
+	uint16_t launch_az_deg;
+	uint16_t rail_len_cm;
+	uint8_t  rail_angle_ddeg;
+	uint8_t  wind_mps;
+	uint8_t  drogue_mps;
+	uint8_t  main_dmps;
+	int8_t   temp_c;
+	uint8_t  n_points;
+	float    peak_thrust_n;
+	float    motor_loaded_kg;
+	float    motor_prop_kg;
+	float    dry_mass_kg;
+	float    ref_diameter_m;
+	uint16_t cd_milli[8];
+	uint16_t t_ms[32];
+	uint16_t thrust_frac[32];
+	uint16_t length_mm;          // added 2026-11-03
+	uint8_t  stability_dcal;
+};
+static_assert(sizeof(SimFlightStart) == 199, "SimFlightStart size changed — sync locator + app + iOS");
+static_assert(offsetof(SimFlightStart, peak_thrust_n) == 32, "SimFlightStart offsets changed — sync locator + app + iOS");
+static_assert(offsetof(SimFlightStart, t_ms) == 68, "SimFlightStart offsets changed — sync locator + app + iOS");
+static_assert(offsetof(SimFlightStart, thrust_frac) == 132, "SimFlightStart offsets changed — sync locator + app + iOS");
+static_assert(offsetof(SimFlightStart, length_mm) == 196, "SimFlightStart offsets changed — sync locator + app + iOS");
+static_assert(offsetof(SimFlightStart, stability_dcal) == 198, "SimFlightStart offsets changed — sync locator + app + iOS");
+// Bit 7 of TelemetryData::physical_deployment_stats: picked up after landing.
+// Relayed untouched; named here so the three copies agree on it.
+static constexpr uint8_t kTelemetryPickedUpBit = 0x80u;
+// Bit 6: the locator is flying an app-started simulated flight (ADR-0041).
+static constexpr uint8_t kTelemetrySimulatedBit = 0x40u;
+
 // ── Addressed app→locator commands (ADR-0020, #34) ──────────────────────────
 // Mirrored from the locator's copy.  The receiver never inspects the target — it
 // only sizes the frame so it can be forwarded intact.  Filtering here would be
@@ -447,8 +554,13 @@ struct ParsedMessage {
 
 struct AppMessage {
 	PacketHeader header;
-	uint8_t payload[64];
+	// The largest app command is SimFlightStart (193 B after the header); this
+	// was 64 until it arrived.  Every app command must fit, or the parser
+	// drops it: see the static_assert below.
+	uint8_t payload[kMaxPayloadBytes - sizeof(PacketHeader)];
 };
+static_assert(sizeof(SimFlightStart) - sizeof(PacketHeader) <= sizeof(AppMessage::payload),
+              "the largest app command must fit the parser's buffer");
 
 struct LocatorRocketSettings {
 	PacketHeader header;

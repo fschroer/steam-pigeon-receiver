@@ -262,6 +262,8 @@ void Communication::ProcessRadioRx() {
 				// Locator is in DataRequested — record burst timing and arm deferred-ACK.
 				locator_in_profile_mode_    = true;
 				last_flight_data_rx_ms_ = HAL_GetTick();
+			} else if (parsed.type == MsgType::FullRecordData || parsed.type == MsgType::FullRecordParity) {
+				last_locator_xfer_rx_ms_ = HAL_GetTick();
 			} else if (parsed.type == MsgType::FlightMetadata || parsed.type == MsgType::FlightEvents) {
 				// Locator is in flight-profile mode (MetadataRequested, or the
 				// event summary that precedes a data burst): it has
@@ -381,6 +383,17 @@ ParseResult Communication::ParseLoraFrame(const uint8_t *data, std::size_t len, 
 		out.type = hdr.msg_type;
 		return ParseResult::Ok;
 
+	case MsgType::FullRecordData:
+	case MsgType::FullRecordParity:
+		// Variable length like FlightData: header fields, then payload_len bytes.
+		// Forwarded raw.  Deliberately NOT a flight-profile-mode signal: a
+		// background full-record transfer keeps the locator's periodic frame
+		// going, so the normal post-periodic forward window stays the rule.
+		if (len < sizeof(FullRecordPacketHeader))
+			return ParseResult::TooShort;
+		out.type = hdr.msg_type;
+		return ParseResult::Ok;
+
 	default:
 		return ParseResult::UnknownType;
 	}
@@ -436,8 +449,31 @@ void Communication::ServiceNoiseFloor() {
 	// and uncollided we would have received the packet and not be overdue.  Hearing
 	// energy here while missing the broadcast IS the collision we are looking for.
 	// A locator that is simply switched off leaves a quiet channel and raises nothing.
-	const bool overdue = (elapsed >= kPeriodicOverdueMs);
+	//
+	// EXCEPT during a full-record transfer (2026-11-04).  The locator then sends
+	// its periodic frame once per ~5.4 s cycle and spends most of the rest
+	// bursting packets, so "overdue" fired 1.5 s into every cycle and sampled the
+	// locator's own carrier.  The app showed "Interference detected" at -18 dBm
+	// on the bench, which would send the user changing channels for nothing.  A
+	// recent transfer packet means the locator is on the air and audible, so a
+	// late periodic frame is the schedule, not a collision.
+	// Inside the safe window the locator is listening even during a transfer
+	// (its listen gap, FullRecordSender::kListenGapMs, outlasts the window), so
+	// those samples stand.
+	//
+	// Held for kXferHoldMs, not kPeriodicOverdueMs, and started also when we
+	// forward a transfer request or ACK, so the pause before a page's first
+	// burst counts too.  Overdue samples are lost for that long; the safe-window
+	// samples after each periodic frame still measure the channel.
+	const bool xfer_recent = last_locator_xfer_rx_ms_ != 0u
+			&& now - last_locator_xfer_rx_ms_ < kXferHoldMs;
+	const bool overdue = (elapsed >= kPeriodicOverdueMs) && !xfer_recent;
 	if (!in_safe_window && !overdue)
+		return;
+	// Nor while the locator may be answering a command we just forwarded: a
+	// VersionInfo or FlightMetadata reply lands inside the safe window (see
+	// kAfterCommandNoiseMs).
+	if (last_forward_was_command_ && now - last_radio_tx_end_ms_ < kAfterCommandNoiseMs)
 		return;
 	if (now - last_noise_sample_ms_ < kNoiseSampleIntervalMs)
 		return;
@@ -1075,6 +1111,9 @@ void Communication::ServicePendingTx() {
 	if (pending_tx_.ready &&
 			HAL_GetTick() - pending_tx_.queued_ms >= kPendingTxStaleMs)
 		pending_tx_.ready = false;
+	if (pending_xfer_.ready &&
+			HAL_GetTick() - pending_xfer_.queued_ms >= kPendingTxStaleMs)
+		pending_xfer_.ready = false;
 
 	// Never transmit while a survey or a search has the radio parked on another
 	// channel: the burst would go out on that frequency, so the locator would not
@@ -1150,8 +1189,10 @@ void Communication::ServicePendingTx() {
 		receiver_info_response_pending_ = true;
 	}
 
-	if (!pending_tx_.ready)
+	if (!pending_tx_.ready) {
+		ServicePendingTransferTx();
 		return;
+	}
 
 	if (locator_in_profile_mode_ &&
 			pending_tx_.msg.header.msg_type == MsgType::FlightDataAck) {
@@ -1193,12 +1234,47 @@ void Communication::ServicePendingTx() {
 	radio_->Send(reinterpret_cast<const uint8_t*>(&pending_tx_.msg),
 			sizeof(PacketHeader) + pending_tx_.len);
 	pending_tx_.ready = false;
+	last_forward_start_ms_ = HAL_GetTick();
+	last_forward_was_command_ = true;
 
 	if (arm_channel_switch) {
 		pending_locator_channel_ = forwarded_channel;
 		locator_channel_switch_armed_ms_ = HAL_GetTick();
 		pending_locator_channel_switch_ = true;
 	}
+}
+
+// The full-record transfer's ACK or page request, sent in the same window as an
+// operator command but after it: the command goes first (pending_tx_ is served
+// first), and this waits for that command's TxDone so the two never overlap.
+// The locator's listen gap (FullRecordSender::kListenGapMs, 900 ms after its
+// periodic frame) outlasts this window, so both land while it listens.
+void Communication::ServicePendingTransferTx() {
+	if (!pending_xfer_.ready)
+		return;
+	const uint32_t now = HAL_GetTick();
+	// Our previous forward, if any, must have finished transmitting.
+	if (static_cast<int32_t>(last_radio_tx_end_ms_ - last_forward_start_ms_) < 0)
+		return;
+	if (now - last_radio_tx_end_ms_ < kPostTxRxGuardMs && last_forward_start_ms_ != 0u)
+		return;
+	// After an app command, leave room for the locator's answer to it (see
+	// last_forward_was_command_).
+	if (last_forward_was_command_ && now - last_radio_tx_end_ms_ < kAfterCommandMs)
+		return;
+	if (!locator_in_profile_mode_) {
+		if (!locator_periodic_ever_rx_)
+			return;
+		const uint32_t elapsed = now - last_locator_periodic_rx_ms_;
+		if (elapsed < kPostPrelaunchMinMs || elapsed >= kPostPrelaunchMaxMs)
+			return;
+	}
+	radio_->Send(reinterpret_cast<const uint8_t*>(&pending_xfer_.msg),
+			sizeof(PacketHeader) + pending_xfer_.len);
+	pending_xfer_.ready = false;
+	last_forward_start_ms_ = now;
+	last_forward_was_command_ = false;
+	last_locator_xfer_rx_ms_ = now;   // the locator may now pause, then burst: see ServiceNoiseFloor
 }
 
 void Communication::QueueBleNameUpdate(const char* name) {
@@ -1333,8 +1409,20 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 		case MsgType::LocatorSearchRequest:
 			message_length_ = sizeof(LocatorSearchRequest) - sizeof(PacketHeader);
 			break;
+		case MsgType::FullRecordRequest:
+			message_length_ = sizeof(FullRecordRequest) - sizeof(PacketHeader);
+			break;
+		case MsgType::FullRecordAck:
+			message_length_ = sizeof(FullRecordAck) - sizeof(PacketHeader);
+			break;
+		case MsgType::SimFlightRequest:
+			message_length_ = sizeof(SimFlightRequest) - sizeof(PacketHeader);   // ADR-0041
+			break;
+		case MsgType::SimFlightStart:
+			message_length_ = sizeof(SimFlightStart) - sizeof(PacketHeader);     // ADR-0041 amendment
+			break;
 		}
-		if (message_length_ > 64) { // Safety check
+		if (message_length_ > sizeof(current_msg_.payload)) { // Safety check
 			Reset();
 		} else {
 			parse_state_ = ParseState::COUNT1;
@@ -1470,12 +1558,19 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 				}
 			} else {
 				// All other payloaded messages: validate CRC and queue for timed forwarding.
+				// The full-record transfer's control frames get their own slot: the app
+				// sends one after nearly every locator frame for ten minutes or more, and
+				// in the shared slot each would overwrite whatever operator command was
+				// still waiting for a window -- an Arm or a deployment-test cancel.
 				if (ValidateCRC(reinterpret_cast<const uint8_t*>(&current_msg_),
 						sizeof(PacketHeader) + message_length_)) {
-					pending_tx_.msg   = current_msg_;
-					pending_tx_.len   = message_length_;
-					pending_tx_.queued_ms = HAL_GetTick();
-					pending_tx_.ready = true;
+					const bool xfer = current_msg_.header.msg_type == MsgType::FullRecordRequest
+							|| current_msg_.header.msg_type == MsgType::FullRecordAck;
+					PendingTx &slot = xfer ? pending_xfer_ : pending_tx_;
+					slot.msg   = current_msg_;
+					slot.len   = message_length_;
+					slot.queued_ms = HAL_GetTick();
+					slot.ready = true;
 				}
 			}
 			Reset();

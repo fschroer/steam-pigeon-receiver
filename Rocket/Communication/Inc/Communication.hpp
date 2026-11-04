@@ -170,6 +170,17 @@ private:
 	// locator transmissions.
 	uint32_t last_locator_periodic_rx_ms_ = 0;
 	bool     locator_periodic_ever_rx_    = false;
+	// When the locator's own full-record traffic (FullRecordData/Parity) was
+	// last received.  A transfer stretches the periodic frame to once per
+	// ~5.4 s cycle, with the locator bursting in between; the noise-floor
+	// sampler must not read that gap as a missed broadcast.  See ServiceNoiseFloor.
+	uint32_t last_locator_xfer_rx_ms_ = 0;
+	// How long after the last transfer packet (or our last forwarded transfer
+	// frame) the locator still counts as mid-transfer.  1.5 s was too short: the
+	// locator pauses before a page's first burst (CRC and planning, plus its
+	// listen gap), and the sampler caught its next packet at -16 dBm (bench,
+	// 2026-11-04).  Longer than a page boundary and a whole ~5.4 s cycle.
+	static constexpr uint32_t kXferHoldMs = 10000u;
 
 	// Safe TX window relative to last received periodic locator packet.
 	// PreLaunchData is sent at ~1 s intervals; the locator's radio transitions
@@ -274,8 +285,10 @@ private:
 	// its locator came down to where that locator's 1 Hz phase happened to land.
 	// Reported as a search that "sometimes misses one of the locators".
 	//
-	// 1400 ms restores 200 ms of margin, which covers the locator's 20 Hz service
-	// tick (50 ms of scheduling granularity on the send instant) several times over.
+	// 1400 ms restores 200 ms of margin, which covers the locator's service tick
+	// (50 ms of scheduling granularity on the send instant at 20 Hz, 20 ms since
+	// the 50 Hz loop of the locator ADR "50 Hz loop, variable-rate archive and
+	// magnetometer") several times over.
 	// If the broadcast grows again, this must grow with it -- the requirement is
 	// period + airtime + jitter, not a round number.
 	static constexpr uint32_t kSurveyConfirmDwellMs = 1400u;
@@ -488,6 +501,36 @@ private:
 		uint32_t   queued_ms = 0;   // HAL_GetTick() when `ready` was set; see kPendingTxStaleMs
 	};
 	PendingTx pending_tx_;
+	// The full-record transfer's FullRecordAck / FullRecordRequest, latest wins
+	// (both are cumulative).  Kept apart from pending_tx_ so they never displace
+	// an operator command; served after it, see ServicePendingTransferTx().
+	PendingTx pending_xfer_;
+	// HAL_GetTick() at our last forward's Send(), so the transfer slot can wait
+	// for that TX to finish (radio_busy_ is never set on this firmware's TX path).
+	uint32_t last_forward_start_ms_ = 0;
+	// True when that forward was an app command (pending_tx_), not a transfer
+	// frame.  The locator answers some commands at once -- a VersionRequest with a
+	// 64-byte VersionInfo, ~130 ms on air -- and the transfer frame must not go
+	// out on top of the answer.  It did (2026-11-04): with the old 100 ms guard
+	// the FullRecordAck started while the locator was still sending VersionInfo,
+	// the locator never heard the ACK and resent the same window for minutes,
+	// and the lost VersionInfo left the app's version stale, so it asked again
+	// the next cycle and the collision repeated.
+	bool last_forward_was_command_ = false;
+	// How long a transfer frame waits after an app command has finished sending:
+	// the locator's reply starts within one 20 ms loop cycle and VersionInfo, the
+	// longest, lasts ~130 ms at SF7/125 kHz.  A command sent at the window's
+	// 50 ms mark still leaves the ACK (~100 ms on air) clear of the locator's
+	// 900 ms listen gap.
+	static constexpr uint32_t kAfterCommandMs = 300u;
+	// The noise-floor sampler waits longer after a command than a transfer frame
+	// does, since a missed sample costs nothing.  The longest prompt reply is the
+	// 96-byte FlightMetadata: sent >50 ms after the request and ~160 ms on air, it
+	// ends ~250 ms or more after our TxDone, at the edge of kAfterCommandMs.  The
+	// bench (2026-11-04) showed two -16 dBm samples, the locator's own RSSI, as a
+	// download fetched the flight list.
+	static constexpr uint32_t kAfterCommandNoiseMs = 600u;
+	void ServicePendingTransferTx();
 	uint32_t last_bt_tx_end_ms_ = 0;
 	bool bt_tx_led_status_serviced_ = true;
 	uint32_t last_bt_rx_end_ms_ = 0;
