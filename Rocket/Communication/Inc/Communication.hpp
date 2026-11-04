@@ -170,6 +170,11 @@ private:
 	// locator transmissions.
 	uint32_t last_locator_periodic_rx_ms_ = 0;
 	bool     locator_periodic_ever_rx_    = false;
+	// When the locator's own full-record traffic (FullRecordData/Parity) was
+	// last received.  A transfer stretches the periodic frame to once per
+	// ~5.4 s cycle, with the locator bursting in between; the noise-floor
+	// sampler must not read that gap as a missed broadcast.  See ServiceNoiseFloor.
+	uint32_t last_locator_xfer_rx_ms_ = 0;
 
 	// Safe TX window relative to last received periodic locator packet.
 	// PreLaunchData is sent at ~1 s intervals; the locator's radio transitions

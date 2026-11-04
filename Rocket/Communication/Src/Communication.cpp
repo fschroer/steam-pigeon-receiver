@@ -262,6 +262,8 @@ void Communication::ProcessRadioRx() {
 				// Locator is in DataRequested — record burst timing and arm deferred-ACK.
 				locator_in_profile_mode_    = true;
 				last_flight_data_rx_ms_ = HAL_GetTick();
+			} else if (parsed.type == MsgType::FullRecordData || parsed.type == MsgType::FullRecordParity) {
+				last_locator_xfer_rx_ms_ = HAL_GetTick();
 			} else if (parsed.type == MsgType::FlightMetadata || parsed.type == MsgType::FlightEvents) {
 				// Locator is in flight-profile mode (MetadataRequested, or the
 				// event summary that precedes a data burst): it has
@@ -447,8 +449,25 @@ void Communication::ServiceNoiseFloor() {
 	// and uncollided we would have received the packet and not be overdue.  Hearing
 	// energy here while missing the broadcast IS the collision we are looking for.
 	// A locator that is simply switched off leaves a quiet channel and raises nothing.
-	const bool overdue = (elapsed >= kPeriodicOverdueMs);
+	//
+	// EXCEPT during a full-record transfer (2026-11-04).  The locator then sends
+	// its periodic frame once per ~5.4 s cycle and spends most of the rest
+	// bursting packets, so "overdue" fired 1.5 s into every cycle and sampled the
+	// locator's own carrier.  The app showed "Interference detected" at -18 dBm
+	// on the bench, which would send the user changing channels for nothing.  A
+	// transfer packet heard within kPeriodicOverdueMs means the locator is on the
+	// air and audible, so a late periodic frame is the schedule, not a collision.
+	// Inside the safe window the locator is listening even during a transfer
+	// (its listen gap, FullRecordSender::kListenGapMs, outlasts the window), so
+	// those samples stand.
+	const bool xfer_recent = last_locator_xfer_rx_ms_ != 0u
+			&& now - last_locator_xfer_rx_ms_ < kPeriodicOverdueMs;
+	const bool overdue = (elapsed >= kPeriodicOverdueMs) && !xfer_recent;
 	if (!in_safe_window && !overdue)
+		return;
+	// Nor while the locator may be answering a command we just forwarded: a
+	// VersionInfo reply lands inside the safe window (see kAfterCommandMs).
+	if (last_forward_was_command_ && now - last_radio_tx_end_ms_ < kAfterCommandMs)
 		return;
 	if (now - last_noise_sample_ms_ < kNoiseSampleIntervalMs)
 		return;
