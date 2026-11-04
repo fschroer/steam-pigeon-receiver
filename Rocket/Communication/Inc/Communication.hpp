@@ -497,6 +497,21 @@ private:
 	// HAL_GetTick() at our last forward's Send(), so the transfer slot can wait
 	// for that TX to finish (radio_busy_ is never set on this firmware's TX path).
 	uint32_t last_forward_start_ms_ = 0;
+	// True when that forward was an app command (pending_tx_), not a transfer
+	// frame.  The locator answers some commands at once -- a VersionRequest with a
+	// 64-byte VersionInfo, ~130 ms on air -- and the transfer frame must not go
+	// out on top of the answer.  It did (2026-11-04): with the old 100 ms guard
+	// the FullRecordAck started while the locator was still sending VersionInfo,
+	// the locator never heard the ACK and resent the same window for minutes,
+	// and the lost VersionInfo left the app's version stale, so it asked again
+	// the next cycle and the collision repeated.
+	bool last_forward_was_command_ = false;
+	// How long a transfer frame waits after an app command has finished sending:
+	// the locator's reply starts within one 20 ms loop cycle and VersionInfo, the
+	// longest, lasts ~130 ms at SF7/125 kHz.  A command sent at the window's
+	// 50 ms mark still leaves the ACK (~100 ms on air) clear of the locator's
+	// 900 ms listen gap.
+	static constexpr uint32_t kAfterCommandMs = 300u;
 	void ServicePendingTransferTx();
 	uint32_t last_bt_tx_end_ms_ = 0;
 	bool bt_tx_led_status_serviced_ = true;

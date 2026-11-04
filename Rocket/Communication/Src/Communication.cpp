@@ -1210,6 +1210,7 @@ void Communication::ServicePendingTx() {
 			sizeof(PacketHeader) + pending_tx_.len);
 	pending_tx_.ready = false;
 	last_forward_start_ms_ = HAL_GetTick();
+	last_forward_was_command_ = true;
 
 	if (arm_channel_switch) {
 		pending_locator_channel_ = forwarded_channel;
@@ -1232,6 +1233,10 @@ void Communication::ServicePendingTransferTx() {
 		return;
 	if (now - last_radio_tx_end_ms_ < kPostTxRxGuardMs && last_forward_start_ms_ != 0u)
 		return;
+	// After an app command, leave room for the locator's answer to it (see
+	// last_forward_was_command_).
+	if (last_forward_was_command_ && now - last_radio_tx_end_ms_ < kAfterCommandMs)
+		return;
 	if (!locator_in_profile_mode_) {
 		if (!locator_periodic_ever_rx_)
 			return;
@@ -1243,6 +1248,7 @@ void Communication::ServicePendingTransferTx() {
 			sizeof(PacketHeader) + pending_xfer_.len);
 	pending_xfer_.ready = false;
 	last_forward_start_ms_ = now;
+	last_forward_was_command_ = false;
 }
 
 void Communication::QueueBleNameUpdate(const char* name) {
