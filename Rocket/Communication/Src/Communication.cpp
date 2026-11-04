@@ -455,13 +455,18 @@ void Communication::ServiceNoiseFloor() {
 	// bursting packets, so "overdue" fired 1.5 s into every cycle and sampled the
 	// locator's own carrier.  The app showed "Interference detected" at -18 dBm
 	// on the bench, which would send the user changing channels for nothing.  A
-	// transfer packet heard within kPeriodicOverdueMs means the locator is on the
-	// air and audible, so a late periodic frame is the schedule, not a collision.
+	// recent transfer packet means the locator is on the air and audible, so a
+	// late periodic frame is the schedule, not a collision.
 	// Inside the safe window the locator is listening even during a transfer
 	// (its listen gap, FullRecordSender::kListenGapMs, outlasts the window), so
 	// those samples stand.
+	//
+	// Held for kXferHoldMs, not kPeriodicOverdueMs, and started also when we
+	// forward a transfer request or ACK, so the pause before a page's first
+	// burst counts too.  Overdue samples are lost for that long; the safe-window
+	// samples after each periodic frame still measure the channel.
 	const bool xfer_recent = last_locator_xfer_rx_ms_ != 0u
-			&& now - last_locator_xfer_rx_ms_ < kPeriodicOverdueMs;
+			&& now - last_locator_xfer_rx_ms_ < kXferHoldMs;
 	const bool overdue = (elapsed >= kPeriodicOverdueMs) && !xfer_recent;
 	if (!in_safe_window && !overdue)
 		return;
@@ -1268,6 +1273,7 @@ void Communication::ServicePendingTransferTx() {
 	pending_xfer_.ready = false;
 	last_forward_start_ms_ = now;
 	last_forward_was_command_ = false;
+	last_locator_xfer_rx_ms_ = now;   // the locator may now pause, then burst: see ServiceNoiseFloor
 }
 
 void Communication::QueueBleNameUpdate(const char* name) {

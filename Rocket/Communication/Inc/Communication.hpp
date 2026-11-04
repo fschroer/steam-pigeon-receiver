@@ -175,6 +175,12 @@ private:
 	// ~5.4 s cycle, with the locator bursting in between; the noise-floor
 	// sampler must not read that gap as a missed broadcast.  See ServiceNoiseFloor.
 	uint32_t last_locator_xfer_rx_ms_ = 0;
+	// How long after the last transfer packet (or our last forwarded transfer
+	// frame) the locator still counts as mid-transfer.  1.5 s was too short: the
+	// locator pauses before a page's first burst (CRC and planning, plus its
+	// listen gap), and the sampler caught its next packet at -16 dBm (bench,
+	// 2026-11-04).  Longer than a page boundary and a whole ~5.4 s cycle.
+	static constexpr uint32_t kXferHoldMs = 10000u;
 
 	// Safe TX window relative to last received periodic locator packet.
 	// PreLaunchData is sent at ~1 s intervals; the locator's radio transitions
