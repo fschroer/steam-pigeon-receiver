@@ -404,9 +404,12 @@ private:
 	 * A blacklist rather than a whitelist, deliberately: an unrecognised or newly
 	 * added message ends the sweep, which fails toward the operator.  Anything added
 	 * here must be something the app sends on its own initiative.
+	 *
+	 * `TimeZoneSet` (locator ADR-0043) is one: the app sends the phone's UTC offset
+	 * after each version answer and every ten minutes while the link is up.
 	 */
 	static constexpr bool IsOperatorCommand(MsgType t) {
-		return t != MsgType::VersionRequest;
+		return t != MsgType::VersionRequest && t != MsgType::TimeZoneSet;
 	}
 
 	bool     search_active_ = false;

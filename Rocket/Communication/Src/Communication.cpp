@@ -1421,6 +1421,9 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 		case MsgType::SimFlightStart:
 			message_length_ = sizeof(SimFlightStart) - sizeof(PacketHeader);     // ADR-0041 amendment
 			break;
+		case MsgType::TimeZoneSet:
+			message_length_ = sizeof(TimeZoneSet) - sizeof(PacketHeader);        // locator ADR-0043
+			break;
 		}
 		if (message_length_ > sizeof(current_msg_.payload)) { // Safety check
 			Reset();
@@ -1567,10 +1570,18 @@ void Communication::OnUART1Char(uint8_t uart_char) {
 					const bool xfer = current_msg_.header.msg_type == MsgType::FullRecordRequest
 							|| current_msg_.header.msg_type == MsgType::FullRecordAck;
 					PendingTx &slot = xfer ? pending_xfer_ : pending_tx_;
-					slot.msg   = current_msg_;
-					slot.len   = message_length_;
-					slot.queued_ms = HAL_GetTick();
-					slot.ready = true;
+					// A time zone (locator ADR-0043) is the app's own housekeeping and is
+					// sent again within ten minutes, so it never displaces an operator
+					// command still waiting in the shared slot.
+					const bool yields = current_msg_.header.msg_type == MsgType::TimeZoneSet
+							&& pending_tx_.ready
+							&& IsOperatorCommand(pending_tx_.msg.header.msg_type);
+					if (!yields) {
+						slot.msg   = current_msg_;
+						slot.len   = message_length_;
+						slot.queued_ms = HAL_GetTick();
+						slot.ready = true;
+					}
 				}
 			}
 			Reset();
