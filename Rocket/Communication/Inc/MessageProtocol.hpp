@@ -67,7 +67,11 @@ enum class MsgType : uint8_t {
 	SimFlightRequest = 30,
 	// App→locator: start a simulated flight from a rocket profile (ADR-0041
 	// amendment).  199 B, the largest app command; relayed in pending_tx_.
-	SimFlightStart = 31
+	SimFlightStart = 31,
+	// App→locator: the phone's UTC offset, for the times the locator prints
+	// (locator ADR "Times are stored in UTC and shown with their offset", 0043).
+	// Relayed like any operator command, in pending_tx_.
+	TimeZoneSet = 32
 };
 
 // Flight event summary indices — wire order of FlightEventsMessage::event_timestamp_ms.
@@ -511,6 +515,15 @@ static_assert(offsetof(SimFlightStart, stability_dcal) == 198, "SimFlightStart o
 static constexpr uint8_t kTelemetryPickedUpBit = 0x80u;
 // Bit 6: the locator is flying an app-started simulated flight (ADR-0041).
 static constexpr uint8_t kTelemetrySimulatedBit = 0x40u;
+
+// The phone's UTC offset in minutes (locator ADR-0043).  Relayed, never decoded.
+struct TimeZoneSet {
+	PacketHeader packet_header;
+	uint32_t target_locator_id;
+	int16_t  utc_offset_min;
+};
+static_assert(sizeof(TimeZoneSet) == 12, "TimeZoneSet size changed — sync locator + app + iOS");
+static_assert(offsetof(TimeZoneSet, utc_offset_min) == 10, "TimeZoneSet offsets changed — sync locator + app + iOS");
 
 // ── Addressed app→locator commands (ADR-0020, #34) ──────────────────────────
 // Mirrored from the locator's copy.  The receiver never inspects the target — it
